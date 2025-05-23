@@ -147,6 +147,7 @@ MODEL:
         VOXEL_AGGREGATION:
             NUM_FEATURES: [64, 64]
             FEATURE_LOCATIONS: [x_conv3, x_conv4]
+        # poll_cfg
         ROI_GRID_POOL:
             FEATURE_LOCATIONS: [x_conv3, x_conv4]
             GRID_SIZE: 6

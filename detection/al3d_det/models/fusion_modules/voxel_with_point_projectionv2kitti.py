@@ -8,6 +8,7 @@ from .deform_fusion import DeformTransLayer
 from .point_to_image_projectionv2 import Point2ImageProjectionV2
 from al3d_det.models.image_modules.ifn.basic_blocks import BasicBlock1D
 
+# 交叉部分融合
 class VoxelWithPointProjectionV2KITTI(nn.Module):
     def __init__(self, 
                 fuse_mode, 

@@ -111,8 +111,9 @@ class FrequencyPositionalEncoding3d(nn.Module):
         point_features = point_features + pe
         return self.dropout(point_features)
 
-
+# 编码层
 class FeedForwardPositionalEncoding(nn.Module):
+    # 1*1卷积 
     def __init__(self, d_input, d_output):
         super().__init__()
         self.ffn = nn.Sequential(
@@ -130,11 +131,13 @@ class FeedForwardPositionalEncoding(nn.Module):
         Returns:
             point_features: (b, xyz, f)
         """
+        # 特征与编码特征相加
         pos_encoding = self.ffn(positional_input.permute(0, 2, 1))
         point_features = point_features + pos_encoding.permute(0, 2, 1)
         return point_features
 
-
+# 检查怎么位置编码
+# density_grid_points 特征128
 def get_positional_encoder(pool_cfg):
     pos_encoder = None
     attention_cfg = pool_cfg.ATTENTION
@@ -142,6 +145,8 @@ def get_positional_encoder(pool_cfg):
         pos_encoder = FrequencyPositionalEncoding3d(d_model=attention_cfg.NUM_FEATURES,
                                                     max_spatial_shape=torch.IntTensor([pool_cfg.GRID_SIZE] * 3),
                                                     dropout=attention_cfg.DROPOUT)
+    # 就是看怎么位置编码
+    # 强度（密度）、点坐标、强度+坐标、强度+坐标—+质心
     elif attention_cfg.POSITIONAL_ENCODER == 'grid_points':
         pos_encoder = FeedForwardPositionalEncoding(d_input=3, d_output=attention_cfg.NUM_FEATURES)
     elif attention_cfg.POSITIONAL_ENCODER == 'density':

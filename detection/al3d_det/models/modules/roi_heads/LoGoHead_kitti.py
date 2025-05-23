@@ -310,10 +310,13 @@ class VoxelAggregationHead(RoIHeadTemplate):
     def __init__(self, input_channels, model_cfg, point_cloud_range, voxel_size, num_class=1, **kwargs):
         super().__init__(num_class=num_class, model_cfg=model_cfg)
         self.model_cfg = model_cfg
+        # 包括池化层配置、融合、注意力等
         self.pool_cfg = model_cfg.ROI_GRID_POOL
+        # 池化层具体数据 与上面的是一一对应
         layer_cfg = self.pool_cfg.POOL_LAYERS
         self.point_cloud_range = point_cloud_range
         self.voxel_size = voxel_size
+        # 前馈与上采样网络
         self.ffn = nn.Sequential(
             nn.Conv1d(7, 64 // 2, 1),
             nn.BatchNorm1d(64 // 2),
@@ -327,32 +330,44 @@ class VoxelAggregationHead(RoIHeadTemplate):
             nn.Conv1d(128 // 2, 128, 1),
         )
         c_out = 0
+        # 池化层的初始化
         self.roi_grid_pool_layers = nn.ModuleList()
+        # locations--[x_conv3, x_conv4]
         for i, src_name in enumerate(self.pool_cfg.FEATURE_LOCATIONS):
+            # MLP
             mlps = layer_cfg[src_name].MLPS
             for k in range(len(mlps)):
+                # 加上VOXEL_AGGREGATION--[64,64]
                 mlps[k] = [self.model_cfg.VOXEL_AGGREGATION.NUM_FEATURES[i]] + mlps[k]
             stack_sa_module_msg = StackSAModuleMSGAttention if self.pool_cfg.get('ATTENTION', {}).get('ENABLED') else StackSAModuleMSG
             pool_layer = stack_sa_module_msg(
+                # [0.8, 1.6]
                 radii=layer_cfg[src_name].POOL_RADIUS,
+                # [16, 16]
                 nsamples=layer_cfg[src_name].NSAMPLE,
                 mlps=mlps,
                 use_xyz=True,
+                # POOL_METHOD: max_pool
                 pool_method=layer_cfg[src_name].POOL_METHOD,
+                # True
                 use_density=layer_cfg[src_name].get('USE_DENSITY')
             )
-
+            # 添加池化层
             self.roi_grid_pool_layers.append(pool_layer)
             c_out += sum([x[-1] for x in mlps])
 
+        # 如果启用注意力机制 就使用
         if self.pool_cfg.get('ATTENTION', {}).get('ENABLED'):
             assert self.pool_cfg.ATTENTION.NUM_FEATURES == c_out, f'ATTENTION.NUM_FEATURES must equal voxel aggregation output dimension of {c_out}.'
             pos_encoder = get_positional_encoder(self.pool_cfg)
+            # 注意力头
             self.attention_head = TransformerEncoder(self.pool_cfg.ATTENTION, pos_encoder)
-
+            # 初始化注意力参数
             for p in self.attention_head.parameters():
                 if p.dim() > 1:
                     nn.init.xavier_uniform_(p)
+        # 交叉注意力头
+        # VoxelWithPointProjectionV2KITTI
         self.crossattention_head = fusion_modules.__all__[self.pool_cfg.FUSION.NAME](
                 fuse_mode=self.pool_cfg.FUSION.FUSE_MODE, 
                 interpolate=self.pool_cfg.FUSION.INTERPOLATE, 
