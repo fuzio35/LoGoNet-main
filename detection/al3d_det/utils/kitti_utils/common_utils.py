@@ -31,7 +31,8 @@ def drop_info_with_name(info, name):
         ret_info[key] = info[key][keep_indices]
     return ret_info
 
-
+# 坐标系转换，全局坐标系-->ROI坐标系
+# 给出点进行坐标转换
 def rotate_points_along_z(points, angle):
     """
     Args:
@@ -42,7 +43,7 @@ def rotate_points_along_z(points, angle):
     """
     points, is_numpy = check_numpy_to_torch(points)
     angle, _ = check_numpy_to_torch(angle)
-
+    # 计算角度进行得到矩阵
     cosa = torch.cos(angle)
     sina = torch.sin(angle)
     zeros = angle.new_zeros(points.shape[0])
@@ -52,6 +53,7 @@ def rotate_points_along_z(points, angle):
         -sina, cosa, zeros,
         zeros, zeros, ones
     ), dim=1).view(-1, 3, 3).float()
+    # 乘了就是转换
     points_rot = torch.matmul(points[:, :, 0:3], rot_matrix)
     points_rot = torch.cat((points_rot, points[:, :, 3:]), dim=-1)
     return points_rot.numpy() if is_numpy else points_rot
