@@ -227,11 +227,16 @@ class VoxelWithPointProjectionV2KITTI(nn.Module):
             ref_points[:, 0] /= f_w
             ref_points[:, 1] /= f_h
             ref_points = ref_points.reshape(1, -1, 1, 2)
+
+            # 处理体素特征
             N, Len_in, _ = flatten_img_feat.shape
             pts_feats = voxel_features_sparse[filter_idx].reshape(1, -1, self.mid_channels)
+            # 空间形状
             level_spatial_shapes = pts_feats.new_tensor([(f_h, f_w)], dtype=torch.long)
             level_start_index = pts_feats.new_tensor([0], dtype=torch.long)
+            # 融合
             voxel_features_sparse[filter_idx] = self.fuse_blocks(pts_feats, ref_points, flatten_img_feat, level_spatial_shapes, level_start_index).squeeze(0)
+            # 最终溶解结果
             image_with_voxelfeatures.append(voxel_features_sparse)
 
         image_with_voxelfeatures = torch.cat(image_with_voxelfeatures, dim= 0)
