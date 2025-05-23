@@ -26,16 +26,20 @@ class Point2ImageProjectionV2(nn.Module):
         self.dtype = torch.float32
         self.voxel_size = torch.as_tensor(voxel_size, dtype=self.dtype)
         self.pc_range = pc_range
+        # 深度阈值
         self.depth_thres = depth_thres
         self.device = device
         # Calculate voxel size
+        # 计算点云范围
         pc_range = torch.as_tensor(pc_range).reshape(2, 3)
+        # 记录最小范围与最大范围
         self.pc_min = pc_range[0]
         self.pc_max = pc_range[1]
         self.double_flip = double_flip
         # self.voxel_size = (self.pc_max - self.pc_min) / self.grid_size
 
         # Add offsets to center of voxel
+        # 计算网格到lidar的变换矩阵
         self.grid_to_lidar = self.grid_to_lidar_unproject(pc_min=self.pc_min,
                                                           voxel_size=self.voxel_size)
 
@@ -50,6 +54,8 @@ class Point2ImageProjectionV2(nn.Module):
         """
         x_size, y_size, z_size = voxel_size
         x_min, y_min, z_min = pc_min
+        # 投影矩阵的获取
+        # 
         unproject = torch.tensor([[x_size, 0, 0, x_min],
                                   [0, y_size, 0, y_min],
                                   [0,  0, z_size, z_min],
@@ -58,7 +64,7 @@ class Point2ImageProjectionV2(nn.Module):
                                  device=self.device)  # (4, 4)
 
         return unproject
-
+    # 雷达到相机变换矩阵、投影矩阵
     def transform_grid(self, voxel_coords, batch_dict, cam_key):
         """
         Transforms voxel sampling grid into frustum sampling grid
@@ -72,11 +78,14 @@ class Point2ImageProjectionV2(nn.Module):
             image_grid: (B, N, 2), Image sampling grid
             image_depths: (B, N), Depth sampling grid
         """
+        # 内外参矩阵的获取
         lidar_to_cam = batch_dict['extrinsic'][cam_key]
         cam_to_img = batch_dict['intrinsic'][cam_key]
+        # 批次获取
         B = lidar_to_cam.shape[0]
 
         # Create transformation matricies
+        # 得到矩阵
         V_G = self.grid_to_lidar.to(lidar_to_cam.device)  # Voxel Grid -> LiDAR (4, 4)
         C_V = lidar_to_cam.float()  # LiDAR -> Camera (B, 4, 4)
         I_C = cam_to_img  # Camera -> Image (B, 3, 3)
@@ -84,20 +93,26 @@ class Point2ImageProjectionV2(nn.Module):
         # Transform to LiDAR
         # import pdb; pdb.set_trace()
         # voxel_coords = voxel_coords[:,[0,3,2,1]] # B,Z,Y,X -> B,X,Y,Z
+        # 如果不在训练 且有翻转
         if not self.training and self.double_flip:
+            # 双重翻转本质上是水平+垂直翻转
             batch_idx = voxel_coords[:, 0]
-            B = B * 4
+            B = B * 4 # 如果启用双重翻转，batch大小应该乘4
             for idx in range(B):
+                # 0 不增强 1 翻转Z轴
                 if idx%4==1:
+                    # 翻转体素坐标
                     voxel_coords[batch_idx==idx, 2] = (self.pc_range[3] - self.pc_range[0])/self.voxel_size[0] - voxel_coords[batch_idx==idx, 2] - 1
                 if idx%4==2:
                     voxel_coords[batch_idx==idx, 1] = (self.pc_range[4] - self.pc_range[1])/self.voxel_size[1] - voxel_coords[batch_idx==idx, 1] - 1
                 if idx%4==3:
                     voxel_coords[batch_idx==idx, 1] = (self.pc_range[3] - self.pc_range[0])/self.voxel_size[0] - voxel_coords[batch_idx==idx, 1] - 1
                     voxel_coords[batch_idx==idx, 2] = (self.pc_range[4] - self.pc_range[1])/self.voxel_size[1] - voxel_coords[batch_idx==idx, 2] - 1
+        # 网格坐标
         point_grid = voxel_coords[:, 1:]
-
+        # batch索引
         batch_idx = voxel_coords[:,0]
+        # 计算每个批次
         point_count = batch_idx.unique(return_counts=True)
         batch_voxel = torch.zeros(B, max(point_count[1]), 3).to(lidar_to_cam.device)
         point_inv = torch.zeros(B, max(point_count[1]), 3).to(lidar_to_cam.device)
@@ -111,15 +126,20 @@ class Point2ImageProjectionV2(nn.Module):
                 aug_mat_inv = torch.eye(3).to(lidar_to_cam.device)
             point_inv[_idx,:point_count[1][_idx]] = torch.matmul(aug_mat_inv, point_grid[batch_idx==_idx].t()).t()       
             '''
+            # 每个批次进行投影
             point_grid_batch = point_grid[batch_idx==_idx]
+            # 如果存在增强矩阵的逆
             if 'aug_matrix_inv' in batch_dict.keys():
                 aug_matrix_inv = batch_dict['aug_matrix_inv'][_idx]
+                # 取消增强
                 for aug_type in ['translate', 'rescale', 'rotate', 'flip']:
                     if aug_type in aug_matrix_inv:
                         if aug_type == 'translate':
                             point_grid_batch = point_grid_batch + torch.Tensor(aug_matrix_inv[aug_type]).to(lidar_to_cam.device)
                         else:
+                            # @是应用
                             point_grid_batch = point_grid_batch @ torch.Tensor(aug_matrix_inv[aug_type]).to(lidar_to_cam.device)
+            # 调整后的点坐标存储 存储体素坐标与掩码
             point_inv[_idx,:point_count[1][_idx]] = point_grid_batch
             batch_voxel[_idx,:point_count[1][_idx]] = voxel_coords[batch_idx==_idx][:,1:]
             batch_mask[_idx,:point_count[1][_idx]] = 1
@@ -128,16 +148,20 @@ class Point2ImageProjectionV2(nn.Module):
         if self.double_flip:
             C_V_new = []
             I_C_new = []
+            # 获取相机数量
             for i in range(C_V.shape[0]):
                 for j in range(4):
                     C_V_new.append(C_V[i].unsqueeze(0))
                     I_C_new.append(I_C[i].unsqueeze(0))
             C_V = torch.cat(C_V_new, dim=0)
             I_C = torch.cat(I_C_new, dim=0)
-
+        # 转换到相机坐标系
         camera_grid = transform_points(trans_01=C_V, points_1=point_inv)
+        # 深度
         image_depths = camera_grid[...,2].clone()
         # Project to image
+        # 每个点的最终投影点--image_grid
+        # batch_voxel就是原始坐标
         image_grid = transform_utils.camera_to_image(project=I_C, points=camera_grid)
         return image_grid.long(), image_depths, batch_voxel.long(), batch_mask
 
@@ -146,6 +170,7 @@ class Point2ImageProjectionV2(nn.Module):
         """
         Generates sampling grid for frustum features
         Args:
+        # N * 4  4代表坐标+batch
             voxel_coords: (N, 4), Voxel coordinates
             batch_dict:
                 lidar_to_cam: (B, 4, 4), LiDAR to camera frame transformation
@@ -158,10 +183,12 @@ class Point2ImageProjectionV2(nn.Module):
                 batch_voxel: (B, N, 3), Voxel coordinates in X,Y,Z of point plane
                 point_mask: (B, N), Useful points indictor
         """
+        # 投影到图像上
         image_grid, image_depths, batch_voxel, batch_mask = self.transform_grid(voxel_coords=voxel_coords, 
                                                                                 batch_dict=batch_dict,
                                                                                 cam_key=cam_key)
         # Rescale Image grid
+        # 放缩
         image_grid = (image_scale * image_grid.float()).long()
 
         # Drop points out of range
@@ -172,6 +199,7 @@ class Point2ImageProjectionV2(nn.Module):
                 for j in range(4):
                     image_shape_new.append(image_shape[i].unsqueeze(0))
             image_shape = torch.cat(image_shape_new, dim=0)
+        # 筛选出在范围内的点
         point_mask = (image_grid[...,0]>0) & (image_grid[...,0]<image_shape[:,1].unsqueeze(-1)) & \
                      (image_grid[...,1]>0) & (image_grid[...,1]<image_shape[:,0].unsqueeze(-1)) & \
                      (image_depths > self.depth_thres[cam_key])

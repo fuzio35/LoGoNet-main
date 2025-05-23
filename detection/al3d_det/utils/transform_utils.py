@@ -44,13 +44,17 @@ def camera_to_image(project, points, normalize=True):
         points_img [torch.Tensor(..., 2)]: Points in image
     """
     # Reshape tensors to expected shape
+    # 转换为齐次坐标 即 最后变为N+1维度
     points = convert_points_to_homogeneous(points)
     project_pad = torch.eye(4).unsqueeze(0)
+    # 投影矩阵
     project_pad = project_pad.repeat(project.shape[0],1,1).to(project.device)
     project_pad[:,:project.shape[1],:project.shape[2]] = project
 
     # Transform points to image and get depths
+    # 乘上去
     points_t = torch.bmm(points, project_pad.permute(0,2,1))
+    # 转回非齐次坐标上
     points_img = convert_points_from_homogeneous(points_t)
     if normalize:
         points_img = points_img / points_img[...,-1].unsqueeze(-1)

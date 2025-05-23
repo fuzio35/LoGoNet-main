@@ -1,5 +1,5 @@
 import torch.nn as nn
-
+# 就是两个标准卷积
 class BasicBlock1D(nn.Module):
 
     def __init__(self, in_channels, out_channels, **kwargs):

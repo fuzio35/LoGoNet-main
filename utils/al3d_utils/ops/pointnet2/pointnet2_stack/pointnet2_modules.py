@@ -6,11 +6,13 @@ import torch.nn.functional as F
 
 # from . import pointnet2_utils
 from al3d_utils.ops.pointnet2.pointnet2_stack import pointnet2_utils
-
+# pointnet++
+# 局部融合
 def build_local_aggregation_module(input_channels, config):
     local_aggregation_name = config.get('NAME', 'StackSAModuleMSG')
-
+    # StackSAModuleMSG
     if local_aggregation_name == 'StackSAModuleMSG':
+        # 一样的思路
         mlps = config.MLPS
         for k in range(len(mlps)):
             mlps[k] = [input_channels] + mlps[k]
@@ -18,6 +20,7 @@ def build_local_aggregation_module(input_channels, config):
             radii=config.POOL_RADIUS, nsamples=config.NSAMPLE, mlps=mlps, use_xyz=True, pool_method='max_pool',
         )
         num_c_out = sum([x[-1] for x in mlps])
+    # 就两种聚合模块，一个堆叠，一个相片池化
     elif local_aggregation_name == 'VectorPoolAggregationModuleMSG':
         cur_layer = VectorPoolAggregationModuleMSG(input_channels=input_channels, config=config)
         num_c_out = config.MSG_POST_MLPS[-1]
@@ -26,9 +29,9 @@ def build_local_aggregation_module(input_channels, config):
 
     return cur_layer, num_c_out
 
-
+# MSG
 class StackSAModuleMSG(nn.Module):
-
+    # 球查询半径 采样数 池化类型
     def __init__(self, *, radii: List[float], nsamples: List[int], mlps: List[List[int]],
                  use_xyz: bool = True, pool_method='max_pool', use_density: bool = False):
         """
@@ -45,10 +48,14 @@ class StackSAModuleMSG(nn.Module):
 
         self.groupers = nn.ModuleList()
         self.mlps = nn.ModuleList()
+        # 对求查询依次进行
         for i in range(len(radii)):
+            # 半径与采样数
             radius = radii[i]
             nsample = nsamples[i]
+            # 分组器
             self.groupers.append(pointnet2_utils.QueryAndGroup(radius, nsample, use_xyz=use_xyz, use_density=use_density))
+            # 调整输入维度
             mlp_spec = mlps[i]
             if use_xyz:
                 mlp_spec[0] += 3
@@ -56,6 +63,7 @@ class StackSAModuleMSG(nn.Module):
                 mlp_spec[0] += 1
 
             shared_mlps = []
+            # 共享卷积层
             for k in range(len(mlp_spec) - 1):
                 shared_mlps.extend([
                     nn.Conv2d(mlp_spec[k], mlp_spec[k + 1], kernel_size=1, bias=False),
@@ -64,7 +72,7 @@ class StackSAModuleMSG(nn.Module):
                 ])
             self.mlps.append(nn.Sequential(*shared_mlps))
         self.pool_method = pool_method
-
+        # 初始化权重
         self.init_weights()
 
     def init_weights(self):
@@ -76,7 +84,8 @@ class StackSAModuleMSG(nn.Module):
             if isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1.0)
                 nn.init.constant_(m.bias, 0)
-
+    # 输入：点坐标、点batch数量
+    
     def forward(self, xyz, xyz_batch_cnt, new_xyz, new_xyz_batch_cnt, features=None, empty_voxel_set_zeros=True):
         """
         :param xyz: (N1 + N2 ..., 3) tensor of the xyz coordinates of the features

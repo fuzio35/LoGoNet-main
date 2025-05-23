@@ -8,7 +8,7 @@ from al3d_utils.ops.pointnet2.pointnet2_stack import pointnet2_stack_cuda as poi
 
 from al3d_utils import kde_utils
 
-
+# 球查询
 class BallQuery(Function):
 
     @staticmethod

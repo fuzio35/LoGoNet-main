@@ -8,11 +8,11 @@ from al3d_det.models.image_modules.ifn.basic_blocks import BasicBlock1D
 
 class VoxelWithPointProjectionV2(nn.Module):
     def __init__(self, 
-                fuse_mode, 
-                interpolate, 
+                fuse_mode,  #crossattention_deform
+                interpolate, # 是否插值 True
                 voxel_size, 
-                pc_range, 
-                image_list, 
+                pc_range,  # 点云范围
+                image_list,  # CAMERAS: ['camera_0', 'camera_1', 'camera_2', 'camera_3', 'camera_4'] 
                 image_scale=1, 
                 depth_thres=0, 
                 mid_channels = 16,

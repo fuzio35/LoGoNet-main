@@ -16,7 +16,7 @@ def _get_activation_fn(activation):
         return F.glu
     raise RuntimeError(F"activation should be relu/gelu, not {activation}.")
 
-
+# 变形注意力层
 class DeformTransLayer(nn.Module):
     def __init__(self,
                  d_model=256, d_ffn=1024,
