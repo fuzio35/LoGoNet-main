@@ -477,7 +477,9 @@ class VoxelAggregationHead(RoIHeadTemplate):
 
         pooled_features_list = []
         ball_idxs_list = []
+        # [x_conv3, x_conv4]
         for k, src_name in enumerate(self.pool_cfg.FEATURE_LOCATIONS):
+            # 取出坐标和特征
             point_coords = batch_dict['point_coords'][src_name]
             point_features = batch_dict['point_features'][src_name]
             
@@ -548,9 +550,10 @@ class VoxelAggregationHead(RoIHeadTemplate):
         faked_features = rois.new_ones((grid_size, grid_size, grid_size))
         # 获取非0索引  6*6*6,3
         dense_idx = faked_features.nonzero()  # (N, 3) [x_idx, y_idx, z_idx]
-        # 重复
+        # 重复 B * N * 3  
         dense_idx = dense_idx.repeat(batch_size_rcnn, 1, 1).float()  # (B, 6x6x6, 3)
         # 提取ROI尺寸 
+        # B * N * 3
         local_roi_size = rois.view(batch_size_rcnn, -1)[:, 3:6]
         # 获取相对于 ROI 的网格点坐标
         # 前半部分坐标归一化 -- 乘以局部尺寸，得到网格点在ROI坐标系的位置  最后平移，
