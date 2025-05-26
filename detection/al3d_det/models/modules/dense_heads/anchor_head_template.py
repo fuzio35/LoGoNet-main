@@ -10,6 +10,7 @@ from .target_assigner.axis_aligned_target_assigner import AxisAlignedTargetAssig
 from al3d_utils import common_utils
 from al3d_det.utils import loss_utils, box_coder_utils
 
+# 锚框的生成与配置 ROI类
 class AnchorHeadTemplate(nn.Module):
     def __init__(self, model_cfg, num_class, class_names, grid_size, point_cloud_range, predict_boxes_when_training):
         super().__init__()
@@ -17,8 +18,9 @@ class AnchorHeadTemplate(nn.Module):
         self.num_class = num_class
         self.class_names = class_names
         self.predict_boxes_when_training = predict_boxes_when_training
+        # Flase
         self.use_multihead = self.model_cfg.get('USE_MULTIHEAD', False)
-
+        # AxisAlignedTargetAssigner 锚框分配器
         anchor_target_cfg = self.model_cfg.TARGET_ASSIGNER_CONFIG
         self.box_coder = getattr(box_coder_utils, anchor_target_cfg.BOX_CODER)(
             num_dir_bins=anchor_target_cfg.get('NUM_DIR_BINS', 6),
@@ -26,22 +28,29 @@ class AnchorHeadTemplate(nn.Module):
         )
 
         anchor_generator_cfg = self.model_cfg.ANCHOR_GENERATOR_CONFIG
+        # 锚框生成器
         anchors, self.num_anchors_per_location = self.generate_anchors(
             anchor_generator_cfg, grid_size=grid_size, point_cloud_range=point_cloud_range,
             anchor_ndim=self.box_coder.code_size
         )
         self.anchors = [x.cuda() for x in anchors]
+        # 分配锚框器
         self.target_assigner = self.get_target_assigner(anchor_target_cfg)
 
         self.forward_ret_dict = {}
         self.build_losses(self.model_cfg.LOSS_CONFIG)
 
     @staticmethod
+    # 生成锚框的方法
     def generate_anchors(anchor_generator_cfg, grid_size, point_cloud_range, anchor_ndim=7):
+        # 创建锚框生成器
         anchor_generator = AnchorGenerator(
             anchor_range=point_cloud_range,
             anchor_generator_config=anchor_generator_cfg
         )
+        # 对每一个配置 
+        # feature_map_stride = 8
+        # 产生锚框
         feature_map_size = [grid_size[:2] // config['feature_map_stride'] for config in anchor_generator_cfg]
         anchors_list, num_anchors_per_location_list = anchor_generator.generate_anchors(feature_map_size)
 
@@ -53,6 +62,7 @@ class AnchorHeadTemplate(nn.Module):
 
         return anchors_list, num_anchors_per_location_list
 
+    # 分配锚框 AxisAlignedTargetAssigner
     def get_target_assigner(self, anchor_target_cfg):
         if anchor_target_cfg.NAME == 'ATSS':
             target_assigner = ATSSTargetAssigner(
@@ -72,7 +82,9 @@ class AnchorHeadTemplate(nn.Module):
             raise NotImplementedError
         return target_assigner
 
+    # 最终的loss计算
     def build_losses(self, losses_cfg):
+        # 分类、回归、字典损失
         self.add_module(
             'cls_loss_func',
             loss_utils.SigmoidFocalClassificationLoss(alpha=0.25, gamma=2.0)
@@ -88,6 +100,7 @@ class AnchorHeadTemplate(nn.Module):
             loss_utils.WeightedCrossEntropyLoss()
         )
 
+    # 锚框分配函数
     def assign_targets(self, gt_boxes):
         """
         Args:
@@ -100,13 +113,20 @@ class AnchorHeadTemplate(nn.Module):
         )
         return targets_dict
 
+    
     def get_cls_layer_loss(self):
+        # GT与预测
         cls_preds = self.forward_ret_dict['cls_preds']
         box_cls_labels = self.forward_ret_dict['box_cls_labels']
         batch_size = int(cls_preds.shape[0])
+
+        # 取出有效锚框
         cared = box_cls_labels >= 0  # [N, num_anchors]
+        # 正负样本
         positives = box_cls_labels > 0
         negatives = box_cls_labels == 0
+
+        #分类权重
         negative_cls_weights = negatives * 1.0
         cls_weights = (negative_cls_weights + 1.0 * positives).float()
         reg_weights = positives.float()
