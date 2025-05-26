@@ -20,11 +20,14 @@ from torch.nn.init import xavier_uniform_, constant_
 
 from ..functions import MSDeformAttnFunction
 
-
+# 判断是否是2的幂次 就与n-1相与，判断是否为0
+# 来自DETR模型
 def _is_power_of_2(n):
     if (not isinstance(n, int)) or (n < 0):
         raise ValueError("invalid input for _is_power_of_2: {} (type: {})".format(n, type(n)))
     return (n & (n-1) == 0) and n != 0
+
+# 普通attention--deformAttn--MSDeformAttn
 
 # 多尺度注意力
 class MSDeformAttn(nn.Module):
@@ -40,30 +43,38 @@ class MSDeformAttn(nn.Module):
         super().__init__()
         if d_model % n_heads != 0:
             raise ValueError('d_model must be divisible by n_heads, but got {} and {}'.format(d_model, n_heads))
+        # 计算每个头的维度 头维度最好是2的倍数
         _d_per_head = d_model // n_heads
         # you'd better set _d_per_head to a power of 2 which is more efficient in our CUDA implementation
         if not _is_power_of_2(_d_per_head):
             warnings.warn("You'd better set d_model in MSDeformAttn to make the dimension of each attention head a power of 2 "
                           "which is more efficient in our CUDA implementation.")
 
+        # 图像到列
         self.im2col_step = 64
-
+        # dmodel--隐藏维度  n——level 多尺度级别 n_point代表每个头采样点数量
         self.d_model = d_model
         self.n_levels = n_levels
         self.n_heads = n_heads
         self.n_points = n_points
-
+        # X 与 Y 分别采样 代表两个偏移位置
         self.sampling_offsets = nn.Linear(d_model, n_heads * n_levels * n_points * 2)
+        # 每个query对应的采样点的注意力权重
         self.attention_weights = nn.Linear(d_model, n_heads * n_levels * n_points)
+        # 到V的线性映射、到结果的线性映射
         self.value_proj = nn.Linear(d_model, d_model)
         self.output_proj = nn.Linear(d_model, d_model)
 
         self._reset_parameters()
-
+    # 初始化权重为0
     def _reset_parameters(self):
         constant_(self.sampling_offsets.weight.data, 0.)
+        # [0,8] * (2π/8)  0, pi/4, pi/2, 3pi/4, pi, 5pi/4, 3pi/2, 7pi/4
+        # 代表计算每个头对应的角度
         thetas = torch.arange(self.n_heads, dtype=torch.float32) * (2.0 * math.pi / self.n_heads)
+        # 8 * 2
         grid_init = torch.stack([thetas.cos(), thetas.sin()], -1)
+        # 
         grid_init = (grid_init / grid_init.abs().max(-1, keepdim=True)[0]).view(self.n_heads, 1, 1, 2).repeat(1, self.n_levels, self.n_points, 1)
         for i in range(self.n_points):
             grid_init[:, :, i, :] *= i + 1
@@ -75,7 +86,7 @@ class MSDeformAttn(nn.Module):
         constant_(self.value_proj.bias.data, 0.)
         xavier_uniform_(self.output_proj.weight.data)
         constant_(self.output_proj.bias.data, 0.)
-
+    # 
     def forward(self, query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index, input_padding_mask=None):
         """
         :param query                       (N, Length_{query}, C)

@@ -41,9 +41,11 @@ class DeformTransLayer(nn.Module):
             self.dropout3 = nn.Dropout(dropout)
             self.norm2 = nn.LayerNorm(d_model)
 
+    # 添加位置嵌入
     def with_pos_embed(self, tensor, pos=None):
         return tensor if pos is None else tensor + pos
 
+    # FFN的残差连接
     def forward_ffn(self, src):
         src2 = self.linear2(self.dropout2(self.activation(self.linear1(src))))
         src = src + self.dropout3(src2)
@@ -53,6 +55,8 @@ class DeformTransLayer(nn.Module):
     def forward(self, src_feat, reference_points, key_feat, spatial_shapes, level_start_index, padding_mask=None, query_pos=None):
         # self attention
         query_feat = self.with_pos_embed(src_feat, query_pos)
+        # 注意力机制
+        # self, query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index, input_padding_mask=None
         src2 = self.self_attn(query_feat, reference_points, key_feat, spatial_shapes, level_start_index, padding_mask)
         src_feat = src_feat + self.dropout1(src2)
         if self.norm:
