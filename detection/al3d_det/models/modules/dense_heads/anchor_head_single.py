@@ -3,7 +3,7 @@ import torch.nn as nn
 
 from .anchor_head_template import AnchorHeadTemplate
 
-
+# DENSE——HEad
 class AnchorHeadSingle(AnchorHeadTemplate):
     def __init__(self, model_cfg, input_channels, num_class, class_names, grid_size, point_cloud_range,
                  predict_boxes_when_training=True, **kwargs):

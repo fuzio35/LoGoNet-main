@@ -57,7 +57,7 @@ class MSDeformAttn(nn.Module):
         self.n_levels = n_levels
         self.n_heads = n_heads
         self.n_points = n_points
-        # X 与 Y 分别采样 代表两个偏移位置
+        # X 与 Y 分别采样 代表两个偏移位置    8 * 4 * 4 * 2 仍然是256 但总共采样是128
         self.sampling_offsets = nn.Linear(d_model, n_heads * n_levels * n_points * 2)
         # 每个query对应的采样点的注意力权重
         self.attention_weights = nn.Linear(d_model, n_heads * n_levels * n_points)
@@ -68,25 +68,30 @@ class MSDeformAttn(nn.Module):
         self._reset_parameters()
     # 初始化权重为0
     def _reset_parameters(self):
+        # 初始化权重为0
         constant_(self.sampling_offsets.weight.data, 0.)
         # [0,8] * (2π/8)  0, pi/4, pi/2, 3pi/4, pi, 5pi/4, 3pi/2, 7pi/4
         # 代表计算每个头对应的角度
         thetas = torch.arange(self.n_heads, dtype=torch.float32) * (2.0 * math.pi / self.n_heads)
         # 8 * 2
         grid_init = torch.stack([thetas.cos(), thetas.sin()], -1)
-        # 
+        # 生成初始网格
+        # 先归一化（缩放到-1,1） 然后调整形状 添加两个1代表后续进行广播 2代表X与Y的偏移量 最后重复级与点的数量
         grid_init = (grid_init / grid_init.abs().max(-1, keepdim=True)[0]).view(self.n_heads, 1, 1, 2).repeat(1, self.n_levels, self.n_points, 1)
         for i in range(self.n_points):
             grid_init[:, :, i, :] *= i + 1
+        # 使用sin 、cos值初始化对应的参数 X对应sin Y对应cos
         with torch.no_grad():
             self.sampling_offsets.bias = nn.Parameter(grid_init.view(-1))
         constant_(self.attention_weights.weight.data, 0.)
         constant_(self.attention_weights.bias.data, 0.)
+        # Xavier 初始化
         xavier_uniform_(self.value_proj.weight.data)
         constant_(self.value_proj.bias.data, 0.)
         xavier_uniform_(self.output_proj.weight.data)
         constant_(self.output_proj.bias.data, 0.)
-    # 
+
+    # 查询 参考点  输入维度  输入特征 输入特征形状
     def forward(self, query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index, input_padding_mask=None):
         """
         :param query                       (N, Length_{query}, C)
@@ -99,18 +104,30 @@ class MSDeformAttn(nn.Module):
 
         :return output                     (N, Length_{query}, C)
         """
+        # N是B
+        # query的最后一个维度应该是128；线性层只针对最后一个维度
         N, Len_q, _ = query.shape
         N, Len_in, _ = input_flatten.shape
         assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
-
+        # 投影到影空间
         value = self.value_proj(input_flatten)
+        # 打码 掩码位置设为0
         if input_padding_mask is not None:
             value = value.masked_fill(input_padding_mask[..., None], float(0))
+        # 调整为注意力所需要的维度
+        # 为什么value不按特征层分组？
         value = value.view(N, Len_in, self.n_heads, self.d_model // self.n_heads)
+        # 采样以处理 得到对应的采样偏差
         sampling_offsets = self.sampling_offsets(query).view(N, Len_q, self.n_heads, self.n_levels, self.n_points, 2)
+        # 得到对应的注意力分数
         attention_weights = self.attention_weights(query).view(N, Len_q, self.n_heads, self.n_levels * self.n_points)
         attention_weights = F.softmax(attention_weights, -1).view(N, Len_q, self.n_heads, self.n_levels, self.n_points)
+
+        # 计算采样位置
         # N, Len_q, n_heads, n_levels, n_points, 2
+        # 参考点添加对应的偏差，最终得到采样位置
+        # 2D代表只知道位置
+        # 4D代表还知道别的信息
         if reference_points.shape[-1] == 2:
             offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
             sampling_locations = reference_points[:, :, None, :, None, :] \

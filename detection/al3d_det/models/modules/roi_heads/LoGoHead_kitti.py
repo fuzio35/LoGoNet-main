@@ -398,9 +398,12 @@ class VoxelAggregationHead(RoIHeadTemplate):
                 activate_out=True,
                 fuse_out=True
         )
+        # 划分网格进行投影
         GRID_SIZE = self.model_cfg.ROI_GRID_POOL.GRID_SIZE
         pre_channel = GRID_SIZE * GRID_SIZE * GRID_SIZE * c_out
 
+        # 共享FC 
+        # SHARED_FC: [256, 256]
         shared_fc_list = []
         for k in range(0, self.model_cfg.SHARED_FC.__len__()):
             shared_fc_list.extend([
@@ -414,20 +417,21 @@ class VoxelAggregationHead(RoIHeadTemplate):
                 shared_fc_list.append(nn.Dropout(self.model_cfg.DP_RATIO))
 
         self.shared_fc_layer = nn.Sequential(*shared_fc_list)
-
+        # 回归头和分类头
+        # 都[256-256]
+        # codesize = 7
         self.reg_layers = self.make_fc_layers(
             input_channels=pre_channel,
             output_channels=self.box_coder.code_size * self.num_class,
             fc_list=self.model_cfg.REG_FC
         )
 
-        
         self.cls_layers = self.make_fc_layers(
             input_channels=pre_channel, output_channels=self.num_class, fc_list=self.model_cfg.CLS_FC
         )
 
         self.init_weights(weight_init='xavier')
-
+    # 使用这种方法初始化
     def init_weights(self, weight_init='xavier'):
         if weight_init == 'kaiming':
             init_func = nn.init.kaiming_normal_
@@ -448,6 +452,7 @@ class VoxelAggregationHead(RoIHeadTemplate):
                     nn.init.constant_(m.bias, 0)
         nn.init.normal_(self.reg_layers[-1].weight, mean=0, std=0.001)
 
+    # ROI网格池化 转化为对应的大小
     def roi_grid_pool(self, batch_dict):
         """
         Args:
@@ -463,6 +468,7 @@ class VoxelAggregationHead(RoIHeadTemplate):
         batch_size = batch_dict['batch_size']
         batch_rois = batch_dict['rois']
 
+        # 全局网格点与局部网格点
         global_roi_grid_points, local_roi_grid_points = self.get_global_grid_points_of_roi(
             batch_dict, grid_size=self.model_cfg.ROI_GRID_POOL.GRID_SIZE
         )  # (BxN, 6x6x6, 3)
@@ -517,27 +523,37 @@ class VoxelAggregationHead(RoIHeadTemplate):
             all_ball_idxs = []
         return all_pooled_features, global_roi_grid_points, local_roi_grid_points, all_ball_idxs
 
+    # 根据网格大小获取全局网格点
     def get_global_grid_points_of_roi(self, batch_dict, grid_size):
+        # 取出ROI  rois: (B, num_rois, 7 + C)
         rois = batch_dict['rois']
+        # 转成 B*N,7+c
         rois = rois.view(-1, rois.shape[-1])
+        # ROI数量
         batch_size_rcnn = rois.shape[0]
-
+        # 计算每一个ROI网格的中心点
         local_roi_grid_points = self.get_dense_grid_points(rois, batch_size_rcnn, grid_size)  # (B, 6x6x6, 3)
-
+        # 转化为局部坐标
         global_roi_grid_points = common_utils.rotate_points_along_z(
             local_roi_grid_points.clone(), rois[:, 6]
         ).squeeze(dim=1)
+        # 提取ROI中心点的坐标
         global_center = rois[:, 0:3].clone()
         global_roi_grid_points += global_center.unsqueeze(dim=1)
         return global_roi_grid_points, local_roi_grid_points
 
     @staticmethod
     def get_dense_grid_points(rois, batch_size_rcnn, grid_size):
+        # 获取密集网格点--- 先拿到网格的对应特征 全1张量
         faked_features = rois.new_ones((grid_size, grid_size, grid_size))
+        # 获取非0索引  6*6*6,3
         dense_idx = faked_features.nonzero()  # (N, 3) [x_idx, y_idx, z_idx]
+        # 重复
         dense_idx = dense_idx.repeat(batch_size_rcnn, 1, 1).float()  # (B, 6x6x6, 3)
-
+        # 提取ROI尺寸 
         local_roi_size = rois.view(batch_size_rcnn, -1)[:, 3:6]
+        # 获取相对于 ROI 的网格点坐标
+        # 前半部分坐标归一化 -- 乘以局部尺寸，得到网格点在ROI坐标系的位置  最后平移，
         roi_grid_points = (dense_idx + 0.5) / grid_size * local_roi_size.unsqueeze(dim=1) \
                           - (local_roi_size.unsqueeze(dim=1) / 2)  # (B, 6x6x6, 3)
         return roi_grid_points

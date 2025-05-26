@@ -102,7 +102,7 @@ class VoxelWithPointProjectionV2KITTI(nn.Module):
         voxel_feat = voxel_feat.permute(1,0).contiguous()
         return voxel_feat
 
-
+    # 特征融合
     def fusion(self, image_feat, voxel_feat, image_grid, layer_name=None):
         """
         Fuses voxel features and image features
@@ -137,7 +137,7 @@ class VoxelWithPointProjectionV2KITTI(nn.Module):
             raise NotImplementedError
         
         return voxel_feat
-    # 融合
+    # 融合 
     def fusion_withdeform(self, img_pre_fuse, voxel_feat):
         if self.training and self.dropout_ratio > 0:
             img_pre_fuse = F.dropout(img_pre_fuse, self.dropout_ratio)
@@ -240,6 +240,7 @@ class VoxelWithPointProjectionV2KITTI(nn.Module):
             image_with_voxelfeatures.append(voxel_features_sparse)
 
         image_with_voxelfeatures = torch.cat(image_with_voxelfeatures, dim= 0)
+        # 
         final_voxelimg_feat = self.fusion_withdeform(image_with_voxelfeatures, point_features)
 
         return final_voxelimg_feat
