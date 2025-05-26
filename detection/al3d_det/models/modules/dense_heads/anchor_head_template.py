@@ -130,66 +130,97 @@ class AnchorHeadTemplate(nn.Module):
         negative_cls_weights = negatives * 1.0
         cls_weights = (negative_cls_weights + 1.0 * positives).float()
         reg_weights = positives.float()
+        
+        # 如果只有一个类别，所有正样本类别为1
         if self.num_class == 1:
             # class agnostic
             box_cls_labels[positives] = 1
 
+        # 正样本归一化
         pos_normalizer = positives.sum(1, keepdim=True).float()
         reg_weights /= torch.clamp(pos_normalizer, min=1.0)
         cls_weights /= torch.clamp(pos_normalizer, min=1.0)
-        cls_targets = box_cls_labels * cared.type_as(box_cls_labels)
-        cls_targets = cls_targets.unsqueeze(dim=-1)
 
+        # 创建分类目标 两个主元素相乘，false为0，乘了就代表说去掉了false的值
+        cls_targets = box_cls_labels * cared.type_as(box_cls_labels)
+        # N * 1
+        cls_targets = cls_targets.unsqueeze(dim=-1)
         cls_targets = cls_targets.squeeze(dim=-1)
+
+        # 初始化独热编码
         one_hot_targets = torch.zeros(
             *list(cls_targets.shape), self.num_class + 1, dtype=cls_preds.dtype, device=cls_targets.device
         )
+        # torch.scatter填充张量 
+        # 本质上是将独热编码转化为1热编码
         one_hot_targets.scatter_(-1, cls_targets.unsqueeze(dim=-1).long(), 1.0)
+        # 分类预测形状修改
         cls_preds = cls_preds.view(batch_size, -1, self.num_class)
+        # 去掉背景类别
         one_hot_targets = one_hot_targets[..., 1:]
+        # 产生loss结果
         cls_loss_src = self.cls_loss_func(cls_preds, one_hot_targets, weights=cls_weights)  # [N, M]
         cls_loss = cls_loss_src.sum() / batch_size
 
+        # ×  loss权重
         cls_loss = cls_loss * self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['cls_weight']
         tb_dict = {
             'rpn_loss_cls': cls_loss.item()
         }
         return cls_loss, tb_dict
 
+
+    # 计算两个角度的正弦差
+    # sin(a-b)
     @staticmethod
     def add_sin_difference(boxes1, boxes2, dim=6):
         assert dim != -1
         rad_pred_encoding = torch.sin(boxes1[..., dim:dim + 1]) * torch.cos(boxes2[..., dim:dim + 1])
         rad_tg_encoding = torch.cos(boxes1[..., dim:dim + 1]) * torch.sin(boxes2[..., dim:dim + 1])
+        # 个人猜测，后面要box1-box2；所以这里正弦公式拆开以后分别加到两个box上
         boxes1 = torch.cat([boxes1[..., :dim], rad_pred_encoding, boxes1[..., dim + 1:]], dim=-1)
         boxes2 = torch.cat([boxes2[..., :dim], rad_tg_encoding, boxes2[..., dim + 1:]], dim=-1)
         return boxes1, boxes2
 
     @staticmethod
+    # 计算方向目标 分类
     def get_direction_target(anchors, reg_targets, one_hot=True, dir_offset=0, num_bins=2):
+        # BATCH
         batch_size = reg_targets.shape[0]
+        # B * N * 7
         anchors = anchors.view(batch_size, -1, anchors.shape[-1])
+        # 两个旋转相加
         rot_gt = reg_targets[..., 6] + anchors[..., 6]
+        # 限制旋转值
         offset_rot = common_utils.limit_period(rot_gt - dir_offset, 0, 2 * np.pi)
+        # 计算方向类别
         dir_cls_targets = torch.floor(offset_rot / (2 * np.pi / num_bins)).long()
+        # 箱式分类
         dir_cls_targets = torch.clamp(dir_cls_targets, min=0, max=num_bins - 1)
 
+        # 如果使用独热编码进行分类
         if one_hot:
             dir_targets = torch.zeros(*list(dir_cls_targets.shape), num_bins, dtype=anchors.dtype,
                                       device=dir_cls_targets.device)
+            # 转化为对应的1热编码
             dir_targets.scatter_(-1, dir_cls_targets.unsqueeze(dim=-1).long(), 1.0)
             dir_cls_targets = dir_targets
         return dir_cls_targets
 
+    # 计算回归
     def get_box_reg_layer_loss(self):
+        # 提取盒子预测、分类预测、盒子的GT
         box_preds = self.forward_ret_dict['box_preds']
         box_dir_cls_preds = self.forward_ret_dict.get('dir_cls_preds', None)
         box_reg_targets = self.forward_ret_dict['box_reg_targets']
         box_cls_labels = self.forward_ret_dict['box_cls_labels']
+        # batch
         batch_size = int(box_preds.shape[0])
 
+        # 正样本
         positives = box_cls_labels > 0
         reg_weights = positives.float()
+        # 计算正样本数量并归一化
         pos_normalizer = positives.sum(1, keepdim=True).float()
         reg_weights /= torch.clamp(pos_normalizer, min=1.0)
 
@@ -202,31 +233,38 @@ class AnchorHeadTemplate(nn.Module):
                 anchors = torch.cat(self.anchors, dim=-3)
         else:
             anchors = self.anchors
+
+        # 锚框拓展为batch大小--不同batch的锚框是一致的
         anchors = anchors.view(1, -1, anchors.shape[-1]).repeat(batch_size, 1, 1)
+        # B * N * 7
         box_preds = box_preds.view(batch_size, -1,
                                    box_preds.shape[-1] // self.num_anchors_per_location if not self.use_multihead else
                                    box_preds.shape[-1])
-        # sin(a - b) = sinacosb-cosasinb
+        # sin(a - b) = sinacosb-cosasinb 计算旋转差异
         box_preds_sin, reg_targets_sin = self.add_sin_difference(box_preds, box_reg_targets)
+        # REG_LOSS: smooth-l1 计算框回归损失
         loc_loss_src = self.reg_loss_func(box_preds_sin, reg_targets_sin, weights=reg_weights)  # [N, M]
         loc_loss = loc_loss_src.sum() / batch_size
-
+        # RPN损失
         loc_loss = loc_loss * self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['loc_weight']
         box_loss = loc_loss
         tb_dict = {
             'rpn_loss_loc': loc_loss.item()
         }
 
+        # 如果存在方向预测
         if box_dir_cls_preds is not None:
+            # 得到方向
             dir_targets = self.get_direction_target(
                 anchors, box_reg_targets,
                 dir_offset=self.model_cfg.DIR_OFFSET,
                 num_bins=self.model_cfg.NUM_DIR_BINS
             )
-
+            # =2
             dir_logits = box_dir_cls_preds.view(batch_size, -1, self.model_cfg.NUM_DIR_BINS)
             weights = positives.type_as(dir_logits)
             weights /= torch.clamp(weights.sum(-1, keepdim=True), min=1.0)
+            # 得到损失
             dir_loss = self.dir_loss_func(dir_logits, dir_targets, weights=weights)
             dir_loss = dir_loss.sum() / batch_size
             dir_loss = dir_loss * self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['dir_weight']
@@ -244,6 +282,7 @@ class AnchorHeadTemplate(nn.Module):
         tb_dict['rpn_loss'] = rpn_loss.item()
         return rpn_loss, tb_dict
 
+    # 产生最终的目标检测框
     def generate_predicted_boxes(self, batch_size, cls_preds, box_preds, dir_cls_preds=None):
         """
         Args:
@@ -257,6 +296,7 @@ class AnchorHeadTemplate(nn.Module):
             batch_box_preds: (B, num_boxes, 7+C)
 
         """
+        # 锚框变为 N*3
         if isinstance(self.anchors, list):
             if self.use_multihead:
                 anchors = torch.cat([anchor.permute(3, 4, 0, 1, 2, 5).contiguous().view(-1, anchor.shape[-1])
@@ -265,25 +305,37 @@ class AnchorHeadTemplate(nn.Module):
                 anchors = torch.cat(self.anchors, dim=-3)
         else:
             anchors = self.anchors
+        # 锚框数量
         num_anchors = anchors.view(-1, anchors.shape[-1]).shape[0]
+        # 扩展到batch
         batch_anchors = anchors.view(1, -1, anchors.shape[-1]).repeat(batch_size, 1, 1)
+
+        # N * 锚框 * class
         batch_cls_preds = cls_preds.view(batch_size, num_anchors, -1).float() \
             if not isinstance(cls_preds, list) else cls_preds
+        # N * 锚框 * 7
         batch_box_preds = box_preds.view(batch_size, num_anchors, -1) if not isinstance(box_preds, list) \
             else torch.cat(box_preds, dim=1).view(batch_size, num_anchors, -1)
+        # 解码预测 得到锚框
         batch_box_preds = self.box_coder.decode_torch(batch_box_preds, batch_anchors)
 
+        # 方向预测
+        # DIR_OFFSET: 0.78539
+        # DIR_LIMIT_OFFSET: 0.0
         if dir_cls_preds is not None:
+            # 更新预测的旋转角度
             dir_offset = self.model_cfg.DIR_OFFSET
             dir_limit_offset = self.model_cfg.DIR_LIMIT_OFFSET
             dir_cls_preds = dir_cls_preds.view(batch_size, num_anchors, -1) if not isinstance(dir_cls_preds, list) \
                 else torch.cat(dir_cls_preds, dim=1).view(batch_size, num_anchors, -1)
+            # 得到预测角度分类
             dir_labels = torch.max(dir_cls_preds, dim=-1)[1]
-
+            # 周期 限制在范围内
             period = (2 * np.pi / self.model_cfg.NUM_DIR_BINS)
             dir_rot = common_utils.limit_period(
                 batch_box_preds[..., 6] - dir_offset, dir_limit_offset, period
             )
+            # 最终预测
             batch_box_preds[..., 6] = dir_rot + dir_offset + period * dir_labels.to(batch_box_preds.dtype)
 
         if isinstance(self.box_coder, box_coder_utils.PreviousResidualDecoder):

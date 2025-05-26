@@ -305,7 +305,7 @@ class RoIHeadTemplate(nn.Module):
         batch_box_preds = batch_box_preds.view(batch_size, -1, code_size)
         return batch_cls_preds, batch_box_preds
 
-# 汇总头
+# 汇总头--体素汇总
 class VoxelAggregationHead(RoIHeadTemplate):
     def __init__(self, input_channels, model_cfg, point_cloud_range, voxel_size, num_class=1, **kwargs):
         super().__init__(num_class=num_class, model_cfg=model_cfg)
