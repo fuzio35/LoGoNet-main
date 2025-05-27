@@ -79,4 +79,5 @@ class AnchorHeadSingle(AnchorHeadTemplate):
             data_dict['batch_box_preds'] = batch_box_preds
             data_dict['cls_preds_normalized'] = False
 
+        # 也这里最终包含；分类、框、角度预测与 锚框的标签、权重与框位置 、预测的框分类、位置
         return data_dict

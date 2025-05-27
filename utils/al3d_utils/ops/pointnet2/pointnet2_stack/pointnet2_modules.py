@@ -7,7 +7,7 @@ import torch.nn.functional as F
 # from . import pointnet2_utils
 from al3d_utils.ops.pointnet2.pointnet2_stack import pointnet2_utils
 # pointnet++
-# 局部融合
+# 构建局部特征聚合模块
 def build_local_aggregation_module(input_channels, config):
     local_aggregation_name = config.get('NAME', 'StackSAModuleMSG')
     # StackSAModuleMSG

@@ -8,7 +8,7 @@ from al3d_utils.ops.pointnet2.pointnet2_stack import pointnet2_stack_cuda as poi
 
 from al3d_utils import kde_utils
 
-# 球查询
+# 球查询 采样的一部分
 class BallQuery(Function):
 
     @staticmethod
@@ -34,11 +34,11 @@ class BallQuery(Function):
         B = xyz_batch_cnt.shape[0]
         M = new_xyz.shape[0]
         idx = torch.cuda.IntTensor(M, nsample).zero_()
-
+        # 底层库
         pointnet2.ball_query_wrapper(B, M, radius, nsample, new_xyz, new_xyz_batch_cnt, xyz, xyz_batch_cnt, idx)
         empty_ball_mask = (idx[:, 0] == -1)
         idx[empty_ball_mask] = 0
-
+        # 设置不可微分
         ctx.mark_non_differentiable(idx)
         ctx.mark_non_differentiable(empty_ball_mask)
 
@@ -56,12 +56,13 @@ ball_query = BallQuery.apply
 class BallQueryCount(Function):
 
     @staticmethod
+    # 半径、采样点数、所有输入点坐标、batch的点数、查询中心坐标、batch查询中心的数量
     def forward(ctx, radius: float, nsample: int, xyz: torch.Tensor, xyz_batch_cnt: torch.Tensor,
                 new_xyz: torch.Tensor, new_xyz_batch_cnt):
         """
         Args:
             ctx:
-            radius: float, radius of the balls
+            radius: float, radius of the balls 
             nsample: int, maximum number of features in the balls
             xyz: (N1 + N2 ..., 3) xyz coordinates of the features
             xyz_batch_cnt: (batch_size), [N1, N2, ...]
@@ -70,18 +71,21 @@ class BallQueryCount(Function):
         Returns:
             idx: (M1 + M2, nsample) tensor with the indicies of the features that form the query balls
         """
+        # 保证内参连续性
         assert new_xyz.is_contiguous()
         assert new_xyz_batch_cnt.is_contiguous()
         assert xyz.is_contiguous()
         assert xyz_batch_cnt.is_contiguous()
 
+        # 取出 B M
         B = xyz_batch_cnt.shape[0]
         M = new_xyz.shape[0]
+        # 存储球查询结果
         idx = torch.cuda.IntTensor(M, nsample).zero_() - 1
-
+        # 调用现成的库
         pointnet2.ball_query_count_wrapper(B, M, radius, nsample, new_xyz, new_xyz_batch_cnt, xyz, xyz_batch_cnt, idx)
         empty_ball_mask = (idx[:, 0] == -1)
-        idx[empty_ball_mask] = 0
+        idx[empty_ball_mask] = 0 # 如果有空球体，设置索引为0
         return idx, empty_ball_mask
 
     @staticmethod
@@ -217,7 +221,7 @@ class QueryAndGroup(nn.Module):
 
         return new_features, idx
 
-
+# FPS采样
 class FurthestPointSampling(Function):
     @staticmethod
     def forward(ctx, xyz: torch.Tensor, npoint: int):
@@ -234,7 +238,7 @@ class FurthestPointSampling(Function):
         B, N, _ = xyz.size()
         output = torch.cuda.IntTensor(B, npoint)
         temp = torch.cuda.FloatTensor(B, N).fill_(1e10)
-
+        # 直接调最远点采样 现成的库
         pointnet2.furthest_point_sampling_wrapper(B, N, npoint, xyz, temp, output)
         return output
 

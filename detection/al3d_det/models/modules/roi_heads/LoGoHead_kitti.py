@@ -15,6 +15,8 @@ from al3d_det.models import fusion_modules
 from .proposal_target_layer import ProposalTargetLayer
 
 # ROI区域的头部
+# denseHead将锚框与GT进行匹配；得到正负样本的锚框
+# ROIhead是预测框与锚框进行匹配 防止对GT产生过拟合
 class RoIHeadTemplate(nn.Module):
     def __init__(self, num_class, model_cfg, **kwargs):
         super().__init__()
@@ -60,9 +62,9 @@ class RoIHeadTemplate(nn.Module):
         Args:
             batch_dict:
                 batch_size:
-                batch_cls_preds: (B, num_boxes, num_classes | 1) or (N1+N2+..., num_classes | 1)
-                batch_box_preds: (B, num_boxes, 7+C) or (N1+N2+..., 7+C)
-                cls_preds_normalized: indicate whether batch_cls_preds is normalized
+                batch_cls_preds: (B, num_boxes, num_classes | 1) or (N1+N2+..., num_classes | 1)  # 预测的框
+                batch_box_preds: (B, num_boxes, 7+C) or (N1+N2+..., 7+C) # 分类与框具体的结果
+                cls_preds_normalized: indicate whether batch_cls_preds is normalized # 归一化
                 batch_index: optional (N1+N2+...)
             nms_config:
         Returns:
@@ -79,7 +81,7 @@ class RoIHeadTemplate(nn.Module):
         batch_box_preds = batch_dict['batch_box_preds']
         batch_cls_preds = batch_dict['batch_cls_preds']
         # NMS_POST_MAXSIZE: 512
-        # ROI区域
+        # ROI区域最大数量
         rois = batch_box_preds.new_zeros((batch_size, nms_config.NMS_POST_MAXSIZE, batch_box_preds.shape[-1]))
         roi_scores = batch_box_preds.new_zeros((batch_size, nms_config.NMS_POST_MAXSIZE))
         roi_labels = batch_box_preds.new_zeros((batch_size, nms_config.NMS_POST_MAXSIZE), dtype=torch.long)
@@ -121,7 +123,7 @@ class RoIHeadTemplate(nn.Module):
     def assign_targets(self, batch_dict):
         batch_size = batch_dict['batch_size']
         with torch.no_grad():
-            # 得到采样以后的ROI 
+            # 得到采样以后的ROI 这里也进行了匹配
             targets_dict = self.proposal_target_layer.forward(batch_dict)
         # 拿到了ROI与GT
         rois = targets_dict['rois']  # (B, N, 7 + C)
@@ -271,6 +273,7 @@ class RoIHeadTemplate(nn.Module):
         tb_dict['rcnn_loss'] = rcnn_loss.item()
         return rcnn_loss, tb_dict
     # 产生预测框，，基于ROI、分类预测、框预测结果
+    # 依据ROI生成预测框
     def generate_predicted_boxes(self, batch_size, rois, cls_preds, box_preds):
         """
         Args:
@@ -306,6 +309,7 @@ class RoIHeadTemplate(nn.Module):
         return batch_cls_preds, batch_box_preds
 
 # 汇总头--体素汇总
+# 添加了融合机制的头
 class VoxelAggregationHead(RoIHeadTemplate):
     def __init__(self, input_channels, model_cfg, point_cloud_range, voxel_size, num_class=1, **kwargs):
         super().__init__(num_class=num_class, model_cfg=model_cfg)
@@ -332,13 +336,15 @@ class VoxelAggregationHead(RoIHeadTemplate):
         c_out = 0
         # 池化层的初始化
         self.roi_grid_pool_layers = nn.ModuleList()
-        # locations--[x_conv3, x_conv4]
+        # locations--[x_conv3, x_conv4] --代表说这两层的特征需要池化
         for i, src_name in enumerate(self.pool_cfg.FEATURE_LOCATIONS):
             # MLP
             mlps = layer_cfg[src_name].MLPS
+            # mlpk 代表最终的输出通道
             for k in range(len(mlps)):
-                # 加上VOXEL_AGGREGATION--[64,64]
+                # 加上VOXEL_AGGREGATION--[64,64] 
                 mlps[k] = [self.model_cfg.VOXEL_AGGREGATION.NUM_FEATURES[i]] + mlps[k]
+            # 根据是否有注意力判断是 StackSAModuleMSGAttention 还是 StackSAModuleMSG
             stack_sa_module_msg = StackSAModuleMSGAttention if self.pool_cfg.get('ATTENTION', {}).get('ENABLED') else StackSAModuleMSG
             pool_layer = stack_sa_module_msg(
                 # [0.8, 1.6]
@@ -683,6 +689,7 @@ class VoxelAggregationHead(RoIHeadTemplate):
         return batch_dict
 
 
+# 最终的logonet - kitti头
 class LoGoHeadKITTI(VoxelAggregationHead):
     def __init__(self, input_channels, model_cfg, point_cloud_range, voxel_size, num_class=1, **kwargs):
         super().__init__(input_channels, model_cfg, point_cloud_range, voxel_size, num_class, kwargs=kwargs)

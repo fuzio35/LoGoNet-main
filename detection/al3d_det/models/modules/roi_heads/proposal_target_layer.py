@@ -5,6 +5,7 @@ import torch.nn as nn
 from al3d_utils.ops.iou3d_nms import iou3d_nms_utils
 
 # 处理proposal
+# 作用是为RPN采样目标框===核心，实现ROI与锚框的一一匹配
 class ProposalTargetLayer(nn.Module):
     def __init__(self, roi_sampler_cfg):
         super().__init__()
@@ -29,6 +30,7 @@ class ProposalTargetLayer(nn.Module):
                 reg_valid_mask: (B, M)
                 rcnn_cls_labels: (B, M)
         """
+        # 取出锚框
         batch_rois, batch_gt_of_rois, batch_roi_ious, batch_roi_scores, batch_roi_labels = self.sample_rois_for_rcnn(
             batch_dict=batch_dict
         )
@@ -41,9 +43,10 @@ class ProposalTargetLayer(nn.Module):
             ignore_mask = (batch_roi_ious > self.roi_sampler_cfg.CLS_BG_THRESH) & \
                           (batch_roi_ious < self.roi_sampler_cfg.CLS_FG_THRESH)
             batch_cls_labels[ignore_mask > 0] = -1
+        # roi_iou logonet
         elif self.roi_sampler_cfg.CLS_SCORE_TYPE == 'roi_iou':
-            iou_bg_thresh = self.roi_sampler_cfg.CLS_BG_THRESH
-            iou_fg_thresh = self.roi_sampler_cfg.CLS_FG_THRESH
+            iou_bg_thresh = self.roi_sampler_cfg.CLS_BG_THRESH # 0.25
+            iou_fg_thresh = self.roi_sampler_cfg.CLS_FG_THRESH # 0.75
             fg_mask = batch_roi_ious > iou_fg_thresh
             bg_mask = batch_roi_ious < iou_bg_thresh
             interval_mask = (fg_mask == 0) & (bg_mask == 0)
@@ -181,6 +184,7 @@ class ProposalTargetLayer(nn.Module):
         return sampled_inds
 
     @staticmethod
+    # 采样背景点
     def sample_bg_inds(hard_bg_inds, easy_bg_inds, bg_rois_per_this_image, hard_bg_ratio):
         if hard_bg_inds.numel() > 0 and easy_bg_inds.numel() > 0:
             hard_bg_rois_num = min(int(bg_rois_per_this_image * hard_bg_ratio), len(hard_bg_inds))
@@ -248,7 +252,7 @@ class ProposalTargetLayer(nn.Module):
 
         return max_overlaps, gt_assignment
 
-
+# 加了一个CP 
 class ProposalTargetLayer_CP(nn.Module):
     def __init__(self, roi_sampler_cfg):
         super().__init__()
@@ -278,9 +282,12 @@ class ProposalTargetLayer_CP(nn.Module):
             batch_dict=batch_dict
         )
         # regression valid mask
+        # 一样的设置掩码
         reg_valid_mask = (batch_roi_ious > self.roi_sampler_cfg.REG_FG_THRESH).long()
 
         # classification label
+        # 分类还是iou计算？
+        # 采样、掩码与标签
         if self.roi_sampler_cfg.CLS_SCORE_TYPE == 'cls':
             batch_cls_labels = (batch_roi_ious > self.roi_sampler_cfg.CLS_FG_THRESH).long()
             ignore_mask = (batch_roi_ious > self.roi_sampler_cfg.CLS_BG_THRESH) & \
