@@ -676,12 +676,12 @@ class VoxelAggregationHead(RoIHeadTemplate):
             grid_coords = torch.cat((grid_coordid, global_roi_grid_points.view(-1, 3)), dim=-1)
 
             # 点特征与点密度特征融合
-            # 网格动态融合部分 GDF
+            
             localgrid_densityfeat_fuse = self.crossattention_pointhead(batch_dict, point_features=localgrid_densityfeat, point_coords=grid_coords, layer_name="layer1")
             localgrid_densityfeat_fuse = localgrid_densityfeat_fuse.reshape(pooled_features.shape[0], pooled_features.shape[1], 64)
             localgrid_densityfeat_fuse = self.up_ffn(localgrid_densityfeat_fuse.permute(0, 2, 1))
             if self.pool_cfg.DENSITYQUERY.get('COMBINE'):
-                # 最终FBL
+                
                 pooled_features = pooled_features + localgrid_densityfeat_fuse.permute(0, 2, 1)
 
         # 位置编码模块
@@ -735,31 +735,41 @@ class LoGoHeadKITTI(VoxelAggregationHead):
     def __init__(self, input_channels, model_cfg, point_cloud_range, voxel_size, num_class=1, **kwargs):
         super().__init__(input_channels, model_cfg, point_cloud_range, voxel_size, num_class, kwargs=kwargs)
 
+
+    # 对应于LOGONET的global fusion 模块
     def get_point_voxel_features(self, batch_dict):
         point_features = {}
         point_coords = {}
         B = batch_dict['batch_size']
+        # 计算每个体素的质心--FEATURE_LOCATIONS: [x_conv3, x_conv4]；代表感兴趣的层
+        # 获取体素索引与体素的中心
         centroids_all, centroid_voxel_idxs_all = voxel_aggregation_utils.get_centroids_per_voxel_layer(batch_dict['points'],
                                                                                                        self.model_cfg.VOXEL_AGGREGATION.FEATURE_LOCATIONS,
                                                                                                        batch_dict['multi_scale_3d_strides'],
                                                                                                        self.voxel_size,
                                                                                                        self.point_cloud_range)
+        # 对每个感兴趣的层
         for feature_location in self.model_cfg.VOXEL_AGGREGATION.FEATURE_LOCATIONS:
+            # 取出当前层的对应的体素的质心
             centroids = centroids_all[feature_location][:, :4]
             centroid_voxel_idxs = centroid_voxel_idxs_all[feature_location]
             x_conv = batch_dict['multi_scale_3d_features'][feature_location]
 
+            # 获取非空体素
             overlapping_voxel_feature_indices_nonempty, overlapping_voxel_feature_nonempty_mask = \
                 voxel_aggregation_utils.get_nonempty_voxel_feature_indices(centroid_voxel_idxs, x_conv)
 
+            #
             if self.model_cfg.VOXEL_AGGREGATION.get('USE_EMPTY_VOXELS'):
+                # 对当前层所有体素赋值
                 voxel_points = torch.zeros((x_conv.features.shape[0], centroids.shape[-1]), dtype=centroids.dtype, device=centroids.device)
                 voxel_points[overlapping_voxel_feature_indices_nonempty] = centroids[overlapping_voxel_feature_nonempty_mask]
-
-                # Set voxel center
+                # 核心！每一层体素的分辨率是不一样的！
+                # Set voxel center 空体素掩码
                 empty_mask = torch.ones((x_conv.features.shape[0]), dtype=torch.bool, device=centroids.device)
                 empty_mask[overlapping_voxel_feature_indices_nonempty] = False
                 cur_coords = x_conv.indices[empty_mask]
+                # 获取每一个体素的中心点（非质心
                 xyz = common_utils.get_voxel_centers(
                     cur_coords[:, 1:4],
                     downsample_times=batch_dict['multi_scale_3d_strides'][feature_location],
@@ -767,6 +777,7 @@ class LoGoHeadKITTI(VoxelAggregationHead):
                     point_cloud_range=self.point_cloud_range
                 )
                 cur_coords = cur_coords.type(torch.cuda.FloatTensor)
+                # 体素中心点替换体素坐标
                 cur_coords[:, 1:4] = xyz
                 voxel_points[empty_mask] = cur_coords
 
@@ -774,10 +785,12 @@ class LoGoHeadKITTI(VoxelAggregationHead):
                 point_coords[feature_location] = voxel_points
             else:
                 x_conv_features = torch.zeros((centroids.shape[0], x_conv.features.shape[-1]), dtype=x_conv.features.dtype, device=centroids.device)
+                # 仅仅保留非空体素的坐标
                 x_conv_features[overlapping_voxel_feature_nonempty_mask] = x_conv.features[overlapping_voxel_feature_indices_nonempty]
                 point_coords[feature_location] = centroids[overlapping_voxel_feature_nonempty_mask]
                 coords = centroids[overlapping_voxel_feature_nonempty_mask]
-                if feature_location==self.model_cfg.VOXEL_AGGREGATION.FEATURE_LOCATIONS[0]:                   
+                if feature_location==self.model_cfg.VOXEL_AGGREGATION.FEATURE_LOCATIONS[0]:   
+                    # 这里进行跨模态融合                
                     point_features_fuse = self.crossattention_head(batch_dict, point_features=x_conv_features[overlapping_voxel_feature_nonempty_mask], point_coords=coords, layer_name="layer1")
                     point_features[feature_location] = point_features_fuse
                 else:
