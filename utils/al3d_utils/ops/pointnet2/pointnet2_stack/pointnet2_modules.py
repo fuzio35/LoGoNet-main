@@ -44,6 +44,7 @@ class StackSAModuleMSG(nn.Module):
         """
         super().__init__()
 
+        # 每一层的半径、采样点数量、MLP处理
         assert len(radii) == len(nsamples) == len(mlps)
 
         self.groupers = nn.ModuleList()
@@ -53,11 +54,13 @@ class StackSAModuleMSG(nn.Module):
             # 半径与采样数
             radius = radii[i]
             nsample = nsamples[i]
-            # 分组器
+            # 分组器--依据球查询进行分组
+            # 创建该层的分组器
             self.groupers.append(pointnet2_utils.QueryAndGroup(radius, nsample, use_xyz=use_xyz, use_density=use_density))
             # 调整输入维度
             mlp_spec = mlps[i]
             if use_xyz:
+                # 输入通道数
                 mlp_spec[0] += 3
             if use_density:
                 mlp_spec[0] += 1
@@ -71,6 +74,7 @@ class StackSAModuleMSG(nn.Module):
                     nn.ReLU()
                 ])
             self.mlps.append(nn.Sequential(*shared_mlps))
+        # 最终的池化方法
         self.pool_method = pool_method
         # 初始化权重
         self.init_weights()
@@ -88,9 +92,10 @@ class StackSAModuleMSG(nn.Module):
     
     def forward(self, xyz, xyz_batch_cnt, new_xyz, new_xyz_batch_cnt, features=None, empty_voxel_set_zeros=True):
         """
+        # 原始点坐标 与 batch数量
         :param xyz: (N1 + N2 ..., 3) tensor of the xyz coordinates of the features
         :param xyz_batch_cnt: (batch_size), [N1, N2, ...]
-        :param new_xyz: (M1 + M2 ..., 3)
+        :param new_xyz: (M1 + M2 ..., 3) # 返回采样以后的点与特征
         :param new_xyz_batch_cnt: (batch_size), [M1, M2, ...]
         :param features: (N1 + N2 ..., C) tensor of the descriptors of the the features
         :return:
@@ -99,12 +104,14 @@ class StackSAModuleMSG(nn.Module):
         """
         new_features_list = []
         for k in range(len(self.groupers)):
+            # 获取球查询的结果
             new_features, ball_idxs = self.groupers[k](
                 xyz, xyz_batch_cnt, new_xyz, new_xyz_batch_cnt, features
             )  # (M1 + M2, C, nsample)
             new_features = new_features.permute(1, 0, 2).unsqueeze(dim=0)  # (1, C, M1 + M2 ..., nsample)
+            # MLP处理
             new_features = self.mlps[k](new_features)  # (1, C, M1 + M2 ..., nsample)
-
+                # 池化
             if self.pool_method == 'max_pool':
                 new_features = F.max_pool2d(
                     new_features, kernel_size=[1, new_features.size(3)]
@@ -116,13 +123,14 @@ class StackSAModuleMSG(nn.Module):
             else:
                 raise NotImplementedError
             new_features = new_features.squeeze(dim=0).permute(1, 0)  # (M1 + M2 ..., C)
+            # 当前层的结果
             new_features_list.append(new_features)
 
         new_features = torch.cat(new_features_list, dim=1)  # (M1 + M2 ..., C)
 
         return new_xyz, new_features
 
-
+# 添加了注意力
 class StackSAModuleMSGAttention(StackSAModuleMSG):
     def __init__(self, *, radii: List[float], nsamples: List[int], mlps: List[List[int]], use_xyz: bool, pool_method, use_density: bool = False):
         super().__init__(radii=radii, nsamples=nsamples, mlps=mlps, use_xyz=use_xyz, pool_method=pool_method, use_density=use_density)
@@ -166,7 +174,7 @@ class StackSAModuleMSGAttention(StackSAModuleMSG):
 
         return new_xyz, new_features, all_ball_idxs
 
-
+# 特征传播
 class StackPointnetFPModule(nn.Module):
     def __init__(self, *, mlp: List[int]):
         """
@@ -183,6 +191,7 @@ class StackPointnetFPModule(nn.Module):
             ])
         self.mlp = nn.Sequential(*shared_mlps)
 
+    # 本质上相对于插值
     def forward(self, unknown, unknown_batch_cnt, known, known_batch_cnt, unknown_feats=None, known_feats=None):
         """
         Args:
@@ -197,9 +206,10 @@ class StackPointnetFPModule(nn.Module):
         dist_recip = 1.0 / (dist + 1e-8)
         norm = torch.sum(dist_recip, dim=-1, keepdim=True)
         weight = dist_recip / norm
-
+        # 3邻域插值
         interpolated_feats = pointnet2_utils.three_interpolate(known_feats, idx, weight)
 
+        # 插值上特征 以后处理
         if unknown_feats is not None:
             new_features = torch.cat([interpolated_feats, unknown_feats], dim=1)  # (N1 + N2 ..., C2 + C1)
         else:

@@ -52,7 +52,7 @@ class BallQuery(Function):
 
 ball_query = BallQuery.apply
 
-
+# 计算球体内的点数
 class BallQueryCount(Function):
 
     @staticmethod
@@ -95,10 +95,14 @@ class BallQueryCount(Function):
 
 ball_query_count = BallQueryCount.apply
 
-
+# 分组
 class GroupingOperation(Function):
 
     @staticmethod
+    # 第一个是输入总特征（N * c)
+    # 第二个参数代表每个batch的特征大小
+    # idx代表用于分组的索引--即球查询的结果；利用球查询的结果将原始特征进行分组
+    # idx)batch)cnt代表说每个批次的索引--每个批次
     def forward(ctx, features: torch.Tensor, features_batch_cnt: torch.Tensor,
                 idx: torch.Tensor, idx_batch_cnt: torch.Tensor):
         """
@@ -111,16 +115,18 @@ class GroupingOperation(Function):
         Returns:
             output: (M1 + M2, C, nsample) tensor
         """
+        # 保证连续
         assert features.is_contiguous()
         assert features_batch_cnt.is_contiguous()
         assert idx.is_contiguous()
         assert idx_batch_cnt.is_contiguous()
-
+        # 判断两个是否相等
         assert features.shape[0] == features_batch_cnt.sum(), \
             'features: %s, features_batch_cnt: %s' % (str(features.shape), str(features_batch_cnt))
         assert idx.shape[0] == idx_batch_cnt.sum(), \
             'idx: %s, idx_batch_cnt: %s' % (str(idx.shape), str(idx_batch_cnt))
-
+        
+        #
         M, nsample = idx.size()
         N, C = features.size()
         B = idx_batch_cnt.shape[0]
@@ -154,7 +160,7 @@ class GroupingOperation(Function):
 
 grouping_operation = GroupingOperation.apply
 
-
+# 球查询 + Group 
 class QueryAndGroup(nn.Module):
     def __init__(self, radius: float, nsample: int, use_xyz: bool = True, use_density: bool = False):
         """
@@ -182,20 +188,23 @@ class QueryAndGroup(nn.Module):
         Returns:
             new_features: (M1 + M2, C, nsample) tensor
         """
+        # 判断是否和batch和相等
         assert xyz.shape[0] == xyz_batch_cnt.sum(), 'xyz: %s, xyz_batch_cnt: %s' % (str(xyz.shape), str(new_xyz_batch_cnt))
         assert new_xyz.shape[0] == new_xyz_batch_cnt.sum(), \
             'new_xyz: %s, new_xyz_batch_cnt: %s' % (str(new_xyz.shape), str(new_xyz_batch_cnt))
 
         # idx: (M1 + M2 ..., nsample), empty_ball_mask: (M1 + M2 ...)
         if self.use_density:
+            # 球查询得到查询点
             idx, empty_ball_mask = ball_query_count(self.radius, self.nsample, xyz, xyz_batch_cnt, new_xyz, new_xyz_batch_cnt)
             idx_count = idx.clone()
             idx[idx == -1] = torch.repeat_interleave(idx[:, 0], (idx == -1).sum(-1), dim=0)
         else:
             idx, empty_ball_mask = ball_query(self.radius, self.nsample, xyz, xyz_batch_cnt, new_xyz, new_xyz_batch_cnt)
+        # 得到球查询的点以后 分组特征
         grouped_xyz = grouping_operation(xyz, xyz_batch_cnt, idx, new_xyz_batch_cnt)  # (M1 + M2, 3, nsample)
         grouped_xyz -= new_xyz.unsqueeze(-1)
-
+        # 空球体分组设0
         grouped_xyz[empty_ball_mask] = 0
 
         if self.use_density:
@@ -207,6 +216,7 @@ class QueryAndGroup(nn.Module):
                 grouped_density[empty_ball_mask] = 0
 
         if features is not None:
+            # 汇总特征，同上
             grouped_features = grouping_operation(features, xyz_batch_cnt, idx, new_xyz_batch_cnt)  # (M1 + M2, C, nsample)
             grouped_features[empty_ball_mask] = 0
             if self.use_xyz and self.use_density:
@@ -249,13 +259,14 @@ class FurthestPointSampling(Function):
 
 furthest_point_sample = FurthestPointSampling.apply
 
-
+# KNN 这里是3
 class ThreeNN(Function):
     @staticmethod
     def forward(ctx, unknown, unknown_batch_cnt, known, known_batch_cnt):
         """
         Args:
             ctx:
+            # 未知点的坐标
             unknown: (N1 + N2..., 3)
             unknown_batch_cnt: (batch_size), [N1, N2, ...]
             known: (M1 + M2..., 3)
@@ -270,7 +281,7 @@ class ThreeNN(Function):
 
         dist2 = unknown.new_zeros(unknown.shape)
         idx = unknown_batch_cnt.new_zeros(unknown.shape).int()
-
+        # 计算未知点到最近已知点的距离和 最近索引
         pointnet2.three_nn_wrapper(
             unknown.contiguous(), unknown_batch_cnt.contiguous(),
             known.contiguous(), known_batch_cnt.contiguous(), dist2, idx
@@ -286,7 +297,7 @@ three_nn = ThreeNN.apply
 
 
 class ThreeInterpolate(Function):
-
+    # 特征插值
     @staticmethod
     def forward(ctx, features: torch.Tensor, idx: torch.Tensor, weight: torch.Tensor):
         """
@@ -299,9 +310,10 @@ class ThreeInterpolate(Function):
             out_tensor: (N1 + N2 ..., C)
         """
         assert idx.shape[0] == weight.shape[0] and idx.shape[1] == weight.shape[1] == 3
-
+        # 保存原始信息
         ctx.three_interpolate_for_backward = (idx, weight, features.shape[0])
         output = features.new_zeros((idx.shape[0], features.shape[1]))
+        # 对feature进行插值，最终得到N1+N2+... * 3的输出
         pointnet2.three_interpolate_wrapper(features.contiguous(), idx.contiguous(), weight.contiguous(), output)
         return output
 
@@ -352,7 +364,7 @@ class StackFarthestPointSampling(Function):
         N, _ = xyz.size()
         temp = torch.cuda.FloatTensor(N).fill_(1e10)
         output = torch.cuda.IntTensor(npoint.sum().item())
-
+        # 堆叠的最远点采样
         pointnet2.stack_farthest_point_sampling_wrapper(xyz, temp, xyz_batch_cnt, output, npoint)
         return output
 
@@ -363,7 +375,7 @@ class StackFarthestPointSampling(Function):
 
 stack_farthest_point_sample = StackFarthestPointSampling.apply
 
-
+# 3NN 两步的三领域查询
 class ThreeNNForVectorPoolByTwoStep(Function):
     @staticmethod
     def forward(ctx, support_xyz, xyz_batch_cnt, new_xyz, new_xyz_grid_centers, new_xyz_batch_cnt,
@@ -385,11 +397,14 @@ class ThreeNNForVectorPoolByTwoStep(Function):
             // new_xyz_grid_idxs: (M1 + M2 ..., num_total_grids, 3) three-nn
             // new_xyz_grid_dist2: (M1 + M2 ..., num_total_grids, 3) square of dist of three-nn
         """
+        # new是查询中心、网格中心、batch数量
+        # 查询中心的数量
         num_new_xyz = new_xyz.shape[0]
         new_xyz_grid_dist2 = new_xyz_grid_centers.new_zeros(new_xyz_grid_centers.shape)
         new_xyz_grid_idxs = new_xyz_grid_centers.new_zeros(new_xyz_grid_centers.shape).int().fill_(-1)
 
         while True:
+            # 
             num_max_sum_points = avg_length_of_neighbor_idxs * num_new_xyz
             stack_neighbor_idxs = new_xyz_grid_idxs.new_zeros(num_max_sum_points)
             start_len = new_xyz_grid_idxs.new_zeros(num_new_xyz, 2).int()
