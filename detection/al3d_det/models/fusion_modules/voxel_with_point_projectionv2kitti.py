@@ -214,6 +214,7 @@ class VoxelWithPointProjectionV2KITTI(nn.Module):
             image_features_batch = image_feat_batch.unsqueeze(0)
             
             _, channel_num, f_h, f_w = image_features_batch.shape
+            # K V
             flatten_img_feat = image_features_batch.permute(0, 2, 3, 1).reshape(1, f_h*f_w, channel_num)
             # 如果不插值 就调整坐标大小
             if not self.image_interp:
@@ -230,6 +231,7 @@ class VoxelWithPointProjectionV2KITTI(nn.Module):
 
             # 处理体素特征
             N, Len_in, _ = flatten_img_feat.shape
+            # Q
             pts_feats = voxel_features_sparse[filter_idx].reshape(1, -1, self.mid_channels)
             # 空间形状
             level_spatial_shapes = pts_feats.new_tensor([(f_h, f_w)], dtype=torch.long)

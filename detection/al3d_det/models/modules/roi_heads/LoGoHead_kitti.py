@@ -635,7 +635,7 @@ class VoxelAggregationHead(RoIHeadTemplate):
         :param input_data: input dict
         :return:
         """
-        # 先获取点特征
+        # 先获取GOF特征
         batch_dict['point_features'], batch_dict['point_coords'] = self.get_point_voxel_features(batch_dict)
 
         # 生成ROI区域
@@ -676,7 +676,7 @@ class VoxelAggregationHead(RoIHeadTemplate):
             grid_coords = torch.cat((grid_coordid, global_roi_grid_points.view(-1, 3)), dim=-1)
 
             # 点特征与点密度特征融合
-            
+            # GDF部分
             localgrid_densityfeat_fuse = self.crossattention_pointhead(batch_dict, point_features=localgrid_densityfeat, point_coords=grid_coords, layer_name="layer1")
             localgrid_densityfeat_fuse = localgrid_densityfeat_fuse.reshape(pooled_features.shape[0], pooled_features.shape[1], 64)
             localgrid_densityfeat_fuse = self.up_ffn(localgrid_densityfeat_fuse.permute(0, 2, 1))
@@ -736,7 +736,7 @@ class LoGoHeadKITTI(VoxelAggregationHead):
         super().__init__(input_channels, model_cfg, point_cloud_range, voxel_size, num_class, kwargs=kwargs)
 
 
-    # 对应于LOGONET的global fusion 模块
+    # 对应于LOGONET的global fusion 模块--Gof模块
     def get_point_voxel_features(self, batch_dict):
         point_features = {}
         point_coords = {}
