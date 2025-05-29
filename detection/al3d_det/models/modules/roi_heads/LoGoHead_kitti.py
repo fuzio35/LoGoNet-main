@@ -611,6 +611,8 @@ class VoxelAggregationHead(RoIHeadTemplate):
         return positional_input
 
     def get_positional_input(self, points, rois, local_roi_grid_points):
+        # local_roi_grid_points --本质上是网格坐标
+        # 获取了每个框在每个网格的点数了
         points_per_part = density_utils.find_num_points_per_part_multi(points,
                                                                        rois,
                                                                        self.model_cfg.ROI_GRID_POOL.GRID_SIZE,
@@ -624,6 +626,7 @@ class VoxelAggregationHead(RoIHeadTemplate):
             positional_input = local_roi_grid_points
         elif self.pool_cfg.ATTENTION.POSITIONAL_ENCODER == 'density':
             positional_input = points_per_part
+        # density_grid_points
         elif self.pool_cfg.ATTENTION.POSITIONAL_ENCODER == 'density_grid_points':
             positional_input = torch.cat((local_roi_grid_points, points_per_part), dim=-1)
         else:

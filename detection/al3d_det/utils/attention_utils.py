@@ -3,6 +3,15 @@ import math
 import torch
 import torch.nn as nn
 
+# NUM_FEATURES: 128
+# NUM_HEADS: 1
+# NUM_HIDDEN_FEATURES: 128
+# NUM_LAYERS: 1
+# POSITIONAL_ENCODER: density_grid_points
+# MAX_NUM_BOXES: 20
+# DROPOUT: 0.1
+# COMBINE: True
+# MASK_EMPTY_POINTS: True
 
 class TransformerEncoder(nn.Module):
     """
@@ -11,8 +20,11 @@ class TransformerEncoder(nn.Module):
     def __init__(self, attention_cfg, pos_encoder=None):
         super().__init__()
         self.attention_cfg = attention_cfg
-        self.pos_encoder = pos_encoder
+        self.pos_encoder = pos_encoder # 创建位置编码层
+        # encoder 直接调用
+        # 输入维度数量、头数量、前馈网络维度
         encoder_layers = nn.TransformerEncoderLayer(attention_cfg.NUM_FEATURES, attention_cfg.NUM_HEADS, attention_cfg.NUM_HIDDEN_FEATURES, attention_cfg.DROPOUT)
+        # 根据encodeer层的实例判断进行堆叠
         self.transformer_encoder = nn.TransformerEncoder(encoder_layers, attention_cfg.NUM_LAYERS)
 
     def forward(self, point_features, positional_input, src_key_padding_mask=None):
@@ -26,6 +38,7 @@ class TransformerEncoder(nn.Module):
         """
         # Clone point features to prevent mutating input arguments
         attended_features = torch.clone(point_features)
+        # 如果有位置掩码就掩码上
         if src_key_padding_mask is not None:
             # RoIs sometimes have all zero inputs. This results in a 0/0 division because of masking. Thus, we
             # remove the empty rois to prevent this issue(https://github.com/pytorch/pytorch/issues/24816#issuecomment-524415617)
@@ -33,6 +46,7 @@ class TransformerEncoder(nn.Module):
             attended_features_filtered = attended_features[~empty_rois_mask]
 
             if self.pos_encoder is not None:
+                # 位置编码
                 src_key_padding_mask_filtered = src_key_padding_mask[~empty_rois_mask]
                 attended_features_filtered[~src_key_padding_mask_filtered] = self.pos_encoder(attended_features_filtered,
                                                                                               positional_input[~empty_rois_mask] if positional_input is not None else None)[~src_key_padding_mask_filtered]
@@ -40,6 +54,7 @@ class TransformerEncoder(nn.Module):
             # (b, xyz, f) -> (xyz, b, f)
             attended_features_filtered = attended_features_filtered.permute(1, 0, 2)
             # (xyz, b, f) -> (b, xyz, f)
+            # 最终编码
             attended_features[~empty_rois_mask] = self.transformer_encoder(attended_features_filtered,
                                                                            src_key_padding_mask=src_key_padding_mask[~empty_rois_mask]).permute(1, 0, 2).contiguous()
         else:
