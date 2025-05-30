@@ -1,10 +1,12 @@
 import torch
 import torch.nn as nn
 import torchvision
+from torch.nn.modules.utils import _triple
 
 class DeformConv(nn.Module):
 
-    def __init__(self,in_channels,groups,kernel_size=(3,3),padding=1,stride=1,dilation=1,bias=True):
+    def __init__(self,in_channels,output_channels,kernel_size=(3,3),stride=1,padding=1,
+                 dilation=1,groups=1,deformable_groups=1,bias=True):
         super.__init__()
         # 对核大小产生对应的偏移量 所以输出通道大小是 kernel_size
         self.offset_net = nn.Conv2d(
@@ -68,3 +70,19 @@ class deformable_LKA_Attention(nn.Module):
         # 残差连接
         x = x + shorcut
         return x
+    
+
+class DeformConv3D(nn.Module):
+
+    def __init__(self,in_channels,output_channels,kernel_size=,stride=1,padding=1,
+                 dilation=1,groups=1,deformable_groups=1,bias=True):
+        super.__init__()
+
+        # 分组 判断是否能分成功
+        if(in_channels % groups != 0):
+            raise ValueError('in_channels {} must be divisible by groups {}'.format(in_channels, groups))
+        if output_channels % groups != 0:
+            raise ValueError('out_channels {} must be divisible by groups {}'.format(out_channels, groups))
+        self.in_channels = in_channels
+        self.output_channels = output_channels
+        self.kernel_size = (kernel_size)
