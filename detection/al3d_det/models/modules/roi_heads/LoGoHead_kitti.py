@@ -13,6 +13,7 @@ from al3d_det.utils.model_nms_utils import class_agnostic_nms
 from al3d_det.utils.attention_utils import TransformerEncoder, get_positional_encoder
 from al3d_det.models import fusion_modules 
 from .proposal_target_layer import ProposalTargetLayer
+from al3d_det.models.myself_modules import DLKA
 
 # ROI区域的头部
 # denseHead将锚框与GT进行匹配；得到正负样本的锚框
@@ -363,6 +364,9 @@ class VoxelAggregationHead(RoIHeadTemplate):
             self.roi_grid_pool_layers.append(pool_layer)
             c_out += sum([x[-1] for x in mlps])
 
+        # 自己添加的模块
+        # self.DLKA = DLKA.deformable_LKA_Attention()
+
         # 如果启用注意力机制 就使用
         if self.pool_cfg.get('ATTENTION', {}).get('ENABLED'):
             assert self.pool_cfg.ATTENTION.NUM_FEATURES == c_out, f'ATTENTION.NUM_FEATURES must equal voxel aggregation output dimension of {c_out}.'
@@ -699,15 +703,25 @@ class VoxelAggregationHead(RoIHeadTemplate):
 
             # 加部分
             if self.pool_cfg.ATTENTION.get('COMBINE'):
+                # b*N,216,c
                 attention_output = pooled_features + attention_output
+
+
 
             # Permute
             grid_size = self.model_cfg.ROI_GRID_POOL.GRID_SIZE
+            # batch * roi_size
             batch_size_rcnn = attention_output.shape[0]
+            # b*N,216,c --> B*N,c,6,6,6
             pooled_features = attention_output.permute(0, 2, 1).\
                 contiguous().view(batch_size_rcnn, -1, grid_size, grid_size, grid_size) # (BxN, C, 6, 6, 6)
 
         # 最终特征 分类与回归
+        # 在这里加一个层
+
+
+
+
         shared_features = self.shared_fc_layer(pooled_features.view(batch_size_rcnn, -1, 1))
         rcnn_reg = self.reg_layers(shared_features).transpose(1, 2).contiguous().squeeze(dim=1)  # (B, C)
 
