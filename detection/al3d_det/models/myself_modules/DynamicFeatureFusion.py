@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-# 一个很简单的模块
+# 一个很简单的模块，负责特征融合
 class DFF(nn.Module):
     def __init__(self, dim):
         super().__init__()
