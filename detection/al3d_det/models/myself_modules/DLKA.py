@@ -10,7 +10,8 @@ from torch.nn import init
 
 class DeformConv(nn.Module):
 
-    def __init__(self,in_channels,groups,kernel_size=(3,3),padding=1,stride=1,dilation=1,bias=True):
+    def __init__(self,in_channels,output_channels,kernel_size=(3,3),stride=1,padding=1,
+                 dilation=1,groups=1,deformable_groups=1,bias=True):
         super.__init__()
         # 对核大小产生对应的偏移量 所以输出通道大小是 kernel_size
         self.offset_net = nn.Conv2d(
@@ -125,7 +126,7 @@ class DeformConvFunction(Function):
 
 # 大小可调节
 # 对应着中间的部分
-
+# 
 
 class DeformConv3D(nn.Module):
 
