@@ -1,6 +1,6 @@
-albumentations>=0.3.2
+albumentations
 cityscapesscripts
 imagecorruptions
 mmlvis
 scipy
-sklearn
+scikit-learn
