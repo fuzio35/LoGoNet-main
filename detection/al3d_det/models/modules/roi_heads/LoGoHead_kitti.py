@@ -365,7 +365,13 @@ class VoxelAggregationHead(RoIHeadTemplate):
             c_out += sum([x[-1] for x in mlps])
 
         # 自己添加的模块
-        # self.DLKA = DLKA.deformable_LKA_Attention()
+        self.DLKA = DLKA.DeformConvPack(
+            in_channels=128,
+            out_channels=128,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+        )
 
         # 如果启用注意力机制 就使用
         if self.pool_cfg.get('ATTENTION', {}).get('ENABLED'):
@@ -718,7 +724,7 @@ class VoxelAggregationHead(RoIHeadTemplate):
 
         # 最终特征 分类与回归
         # 在这里加一个层
-
+        pooled_features = self.DLKA(pooled_features)
 
 
 

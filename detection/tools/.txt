@@ -1,3 +1,5 @@
 单卡
 
 python train.py --epochs 60 --cfg_file cfgs/det_model_cfgs/kitti/LoGoNet-kitti.yaml  --workers 0 --batch 4
+
+ bash scripts/dist_train.sh 0,1  2 --cfg_file cfgs/det_model_cfgs/kitti/LoGoNet-kitti.yaml
