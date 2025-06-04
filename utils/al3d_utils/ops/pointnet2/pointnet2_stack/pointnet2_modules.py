@@ -221,23 +221,25 @@ class StackPointnetFPModule(nn.Module):
         return new_features
 
 
-
+# 
 class VectorPoolLocalInterpolateModule(nn.Module):
     def __init__(self, mlp, num_voxels, max_neighbour_distance, nsample, neighbor_type, use_xyz=True,
                  neighbour_distance_multiplier=1.0, xyz_encoding_type='concat'):
         """
         Args:
-            mlp:
-            num_voxels:
-            max_neighbour_distance:
-            neighbor_type: 1: ball, others: cube
-            nsample: find all (-1), find limited number(>0)
-            use_xyz:
-            neighbour_distance_multiplier:
-            xyz_encoding_type:
-        """
+            mlp: # 每层输入通道数列表
+            num_voxels: # 每个查询点附近网格划分数
+            max_neighbour_distance: # 最大查询距离
+            neighbor_type: 1: ball, others: cube # 查询类型
+            nsample: find all (-1), find limited number(>0) # 最大邻居数
+            use_xyz: # 是否相对坐标
+            neighbour_distance_multiplier: # 缩放因子
+            xyz_encoding_type: # 编码类型
+        """ 
         super().__init__()
         self.num_voxels = num_voxels  # [num_grid_x, num_grid_y, num_grid_z]: number of grids in each local area centered at new_xyz
+        # 总网格数量
+        # 将邻域划分为立方体
         self.num_total_grids = self.num_voxels[0] * self.num_voxels[1] * self.num_voxels[2]
         self.max_neighbour_distance = max_neighbour_distance
         self.neighbor_distance_multiplier = neighbour_distance_multiplier
@@ -246,7 +248,9 @@ class VectorPoolLocalInterpolateModule(nn.Module):
         self.use_xyz = use_xyz
         self.xyz_encoding_type = xyz_encoding_type
 
+        # 如果MLP不为空
         if mlp is not None:
+            # +9 (3个邻居点的XYZ偏移)
             if self.use_xyz:
                 mlp[0] += 9 if self.xyz_encoding_type == 'concat' else 0
             shared_mlps = []
@@ -265,10 +269,11 @@ class VectorPoolLocalInterpolateModule(nn.Module):
     def forward(self, support_xyz, support_features, xyz_batch_cnt, new_xyz, new_xyz_grid_centers, new_xyz_batch_cnt):
         """
         Args:
+            # new是采样的点坐标与特征；N1..Nn代表第n个batch采样的点；support是原始点
             support_xyz: (N1 + N2 ..., 3) xyz coordinates of the features
             support_features: (N1 + N2 ..., C) point-wise features
             xyz_batch_cnt: (batch_size), [N1, N2, ...]
-            new_xyz: (M1 + M2 ..., 3) centers of the ball query
+            new_xyz: (M1 + M2 ..., 3) centers of the ball query 
             new_xyz_grid_centers: (M1 + M2 ..., num_total_grids, 3) grids centers of each grid
             new_xyz_batch_cnt: (batch_size), [M1, M2, ...]
         
@@ -276,23 +281,29 @@ class VectorPoolLocalInterpolateModule(nn.Module):
             new_features: (N1 + N2 ..., C_out)
         """
         with torch.no_grad():
+            # 对每个插值点找附近的3个点
             dist, idx, num_avg_length_of_neighbor_idxs = pointnet2_utils.three_nn_for_vector_pool_by_two_step(
                 support_xyz, xyz_batch_cnt, new_xyz, new_xyz_grid_centers, new_xyz_batch_cnt,
                 self.max_neighbour_distance, self.nsample, self.neighbor_type,
                 self.num_avg_length_of_neighbor_idxs, self.num_total_grids, self.neighbor_distance_multiplier
             )
+        # 计算平均邻域权重
         self.num_avg_length_of_neighbor_idxs = max(self.num_avg_length_of_neighbor_idxs, num_avg_length_of_neighbor_idxs.item())
 
+        # 距离越近权重越大
         dist_recip = 1.0 / (dist + 1e-8)
         norm = torch.sum(dist_recip, dim=-1, keepdim=True)
         weight = dist_recip / torch.clamp_min(norm, min=1e-8)
 
         empty_mask = (idx.view(-1, 3)[:, 0] == -1)
         idx.view(-1, 3)[empty_mask] = 0
-
+        #  执行插值 使用原始点计算每个voxel中心的特征值
         interpolated_feats = pointnet2_utils.three_interpolate(support_features, idx.view(-1, 3), weight.view(-1, 3))
         interpolated_feats = interpolated_feats.view(idx.shape[0], idx.shape[1], -1)  # (M1 + M2 ..., num_total_grids, C)
         if self.use_xyz:
+            # 3个邻居的坐标的获取
+            # 都相对中心进行编码
+            # 最后就是维度为9
             near_known_xyz = support_xyz[idx.view(-1, 3).long()].view(-1, 3, 3)  # ( (M1 + M2 ...)*num_total_grids, 3)
             local_xyz = (new_xyz_grid_centers.view(-1, 1, 3) - near_known_xyz).view(-1, idx.shape[1], 9)
             if self.xyz_encoding_type == 'concat':
@@ -300,6 +311,7 @@ class VectorPoolLocalInterpolateModule(nn.Module):
             else:
                 raise NotImplementedError
 
+        # 展平，MLP处理
         new_features = interpolated_feats.view(-1, interpolated_feats.shape[-1])  # ((M1 + M2 ...) * num_total_grids, C)
         new_features[empty_mask, :] = 0
         if self.mlp is not None:
