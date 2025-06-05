@@ -2,7 +2,7 @@
 
 python train.py --epochs 60 --cfg_file cfgs/det_model_cfgs/kitti/LoGoNet-kitti.yaml  --workers 0 --batch 4
 
- bash scripts/dist_train.sh 0,1  2 --cfg_file cfgs/det_model_cfgs/kitti/LoGoNet-kitti.yaml
+ bash scripts/dist_train.sh 0,1  2 --cfg_file cfgs/det_model_cfgs/kitti/LoGoNet-kitti.yaml --workers 8
 
 
 python -m al3d_det.datasets.kitti.kitti_dataset  create_kitti_infos tools/cfgs/det_dataset_cfgs/kitti_dataset_mm.yaml

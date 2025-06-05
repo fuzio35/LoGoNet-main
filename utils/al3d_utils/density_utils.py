@@ -1,7 +1,23 @@
+from collections import defaultdict
+
 import torch
 
 from . import common_utils, voxel_aggregation_utils
 from al3d_utils.ops.roiaware_pool3d import roiaware_pool3d_utils
+
+
+# 计算原始特征等
+def extract_geometric_feature_per_part_mutil(xyz_local,xyz_local_grid):
+    # xyz_local -- N * 3 局部坐标
+    # xyz_local_grid --N * 4 网格坐标 + 所在ROI区域
+    voxel_dict = defaultdict(list)
+    # 遍历每个点，放到对应的体素的list数组内
+    for i in range(xyz_local.size(0)):
+        key = tuple(xyz_local_grid[i][0:3].tolist())
+        voxel_dict[key].append(xyz_local[i])
+
+    return
+
 
 # 计算每个部分中点的数量
 def find_num_points_per_part(batch_points, batch_boxes, grid_size):
@@ -44,6 +60,11 @@ def find_num_points_per_part(batch_points, batch_boxes, grid_size):
             xyz_local[:, None, :], -box_for_each_point[:, 6]
         ).squeeze(dim=1)
         # Change coordinate frame to corner instead of center of box
+
+        # 这里插入一些额外的特征提取器
+        # 对原始点云特征进行池化，以填充
+
+
         # 转换到角落
         xyz_local += box_for_each_point[:, 3:6] / 2
         # points_in_boxes_gpu gets points slightly outside of box, clamp values to make sure no out of index values
@@ -64,51 +85,83 @@ def find_num_points_per_part(batch_points, batch_boxes, grid_size):
     return torch.stack(points_per_parts)
 
 
+# 进行修改，寻找地方插入对PIE的优化
+# 在每个 3D RoI 内进行点的体素划分 并统计每个体素内的点数或质心等信息
 def find_num_points_per_part_multi(batch_points, batch_boxes, grid_size, max_num_boxes, return_centroid=False):
     """
     Args:
-        batch_points: (N, 4)
-        batch_boxes: (B, O, 7)
+        batch_points: (N, 4) N是输入点数
+        batch_boxes: (B, O, 7) O是最大检测数量,即128
         grid_size: G
-        max_num_boxes: M
+        max_num_boxes: M 最多20个框
     Returns:
         points_per_parts: (B, O, G, G, G)
     """
     assert grid_size > 0
 
+    # 取出batch
     batch_idx = batch_points[:, 0]
+    # 取出点云坐标
     batch_points = batch_points[:, 1:4]
 
+    # 每个ROI的每个Voxel的数量
     points_per_parts = []
     for i in range(batch_boxes.shape[0]):
-        # import pdb; pdb.set_trace()
+        # 对每一个盒子 取出当前掩码的
         boxes = batch_boxes[i]
         bs_mask = (batch_idx == i)
+        # 取出batch对应点
         points = batch_points[bs_mask]
+        # 判断每个点是否在框内,得到每个点对应的框id
         box_idxs_of_pts = roiaware_pool3d_utils.points_in_multi_boxes_gpu(points.unsqueeze(0), boxes.unsqueeze(0), max_num_boxes).squeeze(0)
+        # 取出每个点对应的框
         box_for_each_point = boxes[box_idxs_of_pts.long()]
+
+        # 局部坐标系的转换，点对每个框的相对坐标全取出来，此时剩下20个框
+        # 转换至ROI内部坐标系，ROI内部划分网格
         xyz_local = points.unsqueeze(1) - box_for_each_point[..., 0:3]
         xyz_local_original_shape = xyz_local.shape
-        xyz_local = xyz_local.reshape(-1, 1, 3)
-        # Flatten for rotating points
+        xyz_local = xyz_local.reshape(-1, 1, 3) # [445080, 1, 3]
+        # Flatten for rotating points [445080, 1, 3]
         xyz_local = common_utils.rotate_points_along_z(
             xyz_local, -box_for_each_point.reshape(-1, 7)[:, 6]
         )
         # Change coordinate frame to corner instead of center of box
+        # 从框中心转移至角落--坐标原点的重新设定
+
         xyz_local_corner = xyz_local.reshape(xyz_local_original_shape) + box_for_each_point[..., 3:6] / 2
         # points_in_boxes_gpu gets points slightly outside of box, clamp values to make sure no out of index values
+        # 将坐标约束在网格大小内---
+        # xyz_local--原始点云在坐标，[445080, 1, 3]
+        # xyz_local_corner--原点移动以后的坐标，([22254, 20, 3])
+        # xyz_local_grid -- 获取对应的网格坐标
+
+
+        # 最终---点映射至ROI的体素网格坐标系内，转化为网格坐标
         xyz_local_grid = (xyz_local_corner / (box_for_each_point[..., 3:6] / grid_size))
+        # 筛选不正常坐标
         points_out_of_range = ((xyz_local_grid < 0) | (xyz_local_grid >= grid_size) | (xyz_local_grid.isnan())).any(-1).flatten()
+        # 点的局部坐标 + 所在框
+        # 加上了盒子的id
         xyz_local_grid = torch.cat((box_idxs_of_pts.unsqueeze(-1),
                                     xyz_local_grid), dim=-1).long()
         xyz_local_grid = xyz_local_grid.reshape(-1, xyz_local_grid.shape[-1])
         # Filter based on valid box_idxs
         valid_points_mask = (xyz_local_grid[:, 0] != -1) & (~points_out_of_range)
+        # 取出最终的有效的点
+        # 这里已经完成了体素划分，特征为所在体素坐标与对应的所在网格
         xyz_local_grid = xyz_local_grid[valid_points_mask]
+        # 也是先取出有效的点，落入网格的点
+        xyz_local = xyz_local[valid_points_mask].squeeze(1)
+
+        # 这里对点的特征进行提取
 
         if return_centroid:
-            xyz_local = xyz_local[valid_points_mask].squeeze(1)
+
+            # 对每个点求质心，得到每个点的质心
+            # part_idxs是去重以后的所有点，points_per_part是每个点的出现次数
             centroids, part_idxs, points_per_part = voxel_aggregation_utils.get_centroid_per_voxel(xyz_local, xyz_local_grid)
+            # 质心添加到特征,此时具有的为---质心的坐标+每个点的重复次数
             points_per_part = torch.cat((points_per_part.unsqueeze(-1), centroids), dim=-1)
             # Sometimes no points in boxes, usually in the first few iterations. Return empty tensor in that case
             if part_idxs.shape[0] == 0:

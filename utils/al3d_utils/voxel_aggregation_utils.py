@@ -90,7 +90,11 @@ def get_centroid_per_voxel(points, voxel_idxs, num_points_in_voxel=None):
     """
     assert points.shape[0] == voxel_idxs.shape[0]
 
+    # 点先去重，去掉
+    # 返回分别是去重后的点、去重后的点在原始点序列的索引、重复次数
+    # voxel_idxs代表points每个点所在的voxel编号
     centroid_voxel_idxs, unique_idxs, labels_count = voxel_idxs.unique(dim=0, return_inverse=True, return_counts=True)
+    # 扩充为点的维度
     unique_idxs = unique_idxs.view(unique_idxs.size(0), 1).expand(-1, points.size(-1))
 
     # Scatter add points based on unique voxel idxs
@@ -99,9 +103,12 @@ def get_centroid_per_voxel(points, voxel_idxs, num_points_in_voxel=None):
         num_points_in_centroids = torch.zeros((centroid_voxel_idxs.shape[0]), device=points.device, dtype=torch.int64).scatter_add_(0, unique_idxs[:,0], num_points_in_voxel)
         centroids = centroids / num_points_in_centroids.float().unsqueeze(-1)
     else:
+        # 创建每个网格的中心存放数组
+        # 使用scatter进行累加
+        # scatter_add(index,src) 将src的数据累加至index的dim维度上
         centroids = torch.zeros((centroid_voxel_idxs.shape[0], points.shape[-1]), device=points.device, dtype=torch.float).scatter_add_(0, unique_idxs, points)
         centroids = centroids / labels_count.float().unsqueeze(-1)
-
+    # 质心坐标
     return centroids, centroid_voxel_idxs, labels_count
 
 

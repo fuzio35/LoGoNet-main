@@ -57,7 +57,7 @@ def parse_config():
         cfg_from_list(args.set_cfgs, cfg)
 
     return args, cfg
-
+# torch.Size([200, 128, 6, 6, 6])      torch.Size([256, 128, 6, 6, 6])
 
 def main():
     args, cfg = parse_config()

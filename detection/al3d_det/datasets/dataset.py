@@ -98,6 +98,7 @@ class DatasetTemplate(torch.utils.data.Dataset):
 
         current_info = copy.deepcopy(self.infos[index])
         target_idx_list = self.get_sweep_idxs(current_info, self.sweep_count, index)
+        # 获取点
         target_infos, points = self.get_infos_and_points(target_idx_list)
         points = self.merge_sweeps(current_info, target_infos, points, merge_multiframe = self.merge_multiframe)
         input_dict = {

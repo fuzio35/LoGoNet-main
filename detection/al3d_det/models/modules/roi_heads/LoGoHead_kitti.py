@@ -364,7 +364,7 @@ class VoxelAggregationHead(RoIHeadTemplate):
             self.roi_grid_pool_layers.append(pool_layer)
             c_out += sum([x[-1] for x in mlps])
 
-        # 自己添加的模块
+        # 自己添加的模块--1，在整合以后先预处理
         self.DLKA = DLKA.DeformConvPack(
             in_channels=128,
             out_channels=128,
@@ -372,6 +372,9 @@ class VoxelAggregationHead(RoIHeadTemplate):
             stride=1,
             padding=1,
         )
+
+
+
 
         # 如果启用注意力机制 就使用
         if self.pool_cfg.get('ATTENTION', {}).get('ENABLED'):
@@ -608,6 +611,8 @@ class VoxelAggregationHead(RoIHeadTemplate):
         # First feature is density, other potential features are xyz
         # 点数进行对数变化 以便处理
         points_per_part[..., 0] = torch.log10(points_per_part[..., 0] + 0.5) - (math.log10(0.5) if self.model_cfg.get('DENSITY_LOG_SHIFT') else 0)
+        # 这里只有ROI的坐标和密度
+        # 完全可以引入更多的特征
         if self.pool_cfg.DENSITYQUERY.POSITIONAL_ENCODER == 'grid_points':
             positional_input = local_roi_grid_points
         # 位置编码如果是密度，就只要密度
@@ -623,6 +628,9 @@ class VoxelAggregationHead(RoIHeadTemplate):
     def get_positional_input(self, points, rois, local_roi_grid_points):
         # local_roi_grid_points --本质上是网格坐标
         # 获取了每个框在每个网格的点数了
+
+        # 在这里进行新的修改，这里是处理每一个网格的点的密度与数量
+        # 返回的是 体素的质心与密度
         points_per_part = density_utils.find_num_points_per_part_multi(points,
                                                                        rois,
                                                                        self.model_cfg.ROI_GRID_POOL.GRID_SIZE,
@@ -723,7 +731,8 @@ class VoxelAggregationHead(RoIHeadTemplate):
                 contiguous().view(batch_size_rcnn, -1, grid_size, grid_size, grid_size) # (BxN, C, 6, 6, 6)
 
         # 最终特征 分类与回归
-        # 在这里加一个层
+
+        # 在这里加一个层，修改1
         pooled_features = self.DLKA(pooled_features)
 
 
