@@ -709,11 +709,11 @@ class VoxelAggregationHead(RoIHeadTemplate):
                 # pooled_features = pooled_features + localgrid_densityfeat_fuse.permute(0, 2, 1)
 
                 # 新代码
-                pooled_features = pooled_features.permute(0, 2, 1)
+                pooled_features = pooled_features.permute(0, 2, 1).contiguous()
                 pooled_features = pooled_features.view(batch_size_rcnn, -1, grid_size, grid_size, grid_size)
                 localgrid_densityfeat_fuse = localgrid_densityfeat_fuse.view(batch_size_rcnn, -1, grid_size, grid_size, grid_size)
                 pooled_features = self.DFF(pooled_features,localgrid_densityfeat_fuse).view(pooled_features.size(0), pooled_features.size(1), -1)
-                pooled_features = pooled_features.permute(0, 2, 1)
+                pooled_features = pooled_features.permute(0, 2, 1).contiguous()
 
 
 
