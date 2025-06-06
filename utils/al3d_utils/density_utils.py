@@ -6,17 +6,6 @@ from . import common_utils, voxel_aggregation_utils
 from al3d_utils.ops.roiaware_pool3d import roiaware_pool3d_utils
 
 
-# 计算原始特征等
-def extract_geometric_feature_per_part_mutil(xyz_local,xyz_local_grid):
-    # xyz_local -- N * 3 局部坐标
-    # xyz_local_grid --N * 4 网格坐标 + 所在ROI区域
-    voxel_dict = defaultdict(list)
-    # 遍历每个点，放到对应的体素的list数组内
-    for i in range(xyz_local.size(0)):
-        key = tuple(xyz_local_grid[i][0:3].tolist())
-        voxel_dict[key].append(xyz_local[i])
-
-    return
 
 
 # 计算每个部分中点的数量
@@ -155,6 +144,7 @@ def find_num_points_per_part_multi(batch_points, batch_boxes, grid_size, max_num
         xyz_local = xyz_local[valid_points_mask].squeeze(1)
 
         # 这里对点的特征进行提取
+
 
         if return_centroid:
 

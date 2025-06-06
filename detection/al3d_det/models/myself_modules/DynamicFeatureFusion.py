@@ -8,7 +8,7 @@ class DFF(nn.Module):
         super().__init__()
 
         self.conv_atten = nn.Sequential(
-            nn.AdaptiveAvgPool3d(1)
+            nn.AdaptiveAvgPool3d(1),
             nn.Conv3d(dim * 2, dim * 2, kernel_size=1, bias=False),
             nn.Sigmoid()
         )

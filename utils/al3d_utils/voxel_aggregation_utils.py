@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-
+from collections import defaultdict
 
 def get_overlapping_voxel_indices(point_coords, downsample_times, voxel_size, point_cloud_range):
     """
@@ -76,12 +76,12 @@ def get_nonempty_voxel_feature_indices(voxel_indices, x_conv):
     overlapping_voxel_feature_indices_nonempty = overlapping_voxel_feature_indices[overlapping_voxel_feature_nonempty_mask] - 1
     return overlapping_voxel_feature_indices_nonempty, overlapping_voxel_feature_nonempty_mask
 
-
+# 对这里进行修改，以提取更多特征
 def get_centroid_per_voxel(points, voxel_idxs, num_points_in_voxel=None):
     """
     Args:
         points: (N, 4 + (f)) [bxyz + (f)]
-        voxel_idxs: (N, 4) [bxyz]
+        voxel_idxs: (N, 4) [bxyz] 代表每一个点所在的体素的B/X/Y/Z坐标
         num_points_in_voxel: (N)
     Returns:
         centroids: (N', 4 + (f)) [bxyz + (f)] Centroids for each unique voxel
@@ -92,9 +92,14 @@ def get_centroid_per_voxel(points, voxel_idxs, num_points_in_voxel=None):
 
     # 点先去重，去掉
     # 返回分别是去重后的点、去重后的点在原始点序列的索引、重复次数
-    # voxel_idxs代表points每个点所在的voxel编号
+    # centroid_voxel_idxs是去重以后的结果，unique_idxs代表每个点在centroid_voxel_idxs的索引，label_count是重复次数
+    # voxel_idxs是每个点所在的索引！这里得到了所有非空体素的数量
     centroid_voxel_idxs, unique_idxs, labels_count = voxel_idxs.unique(dim=0, return_inverse=True, return_counts=True)
-    # 扩充为点的维度
+
+    # 获取非空体素数量与每个点的特征维度
+    Not_Empty_Grid = centroid_voxel_idxs.size(0)
+    Feature_Per_Point = points.shape[1]
+    # 扩充为点的维度 因为索引维度和点维度需要相同
     unique_idxs = unique_idxs.view(unique_idxs.size(0), 1).expand(-1, points.size(-1))
 
     # Scatter add points based on unique voxel idxs
@@ -109,6 +114,8 @@ def get_centroid_per_voxel(points, voxel_idxs, num_points_in_voxel=None):
         centroids = torch.zeros((centroid_voxel_idxs.shape[0], points.shape[-1]), device=points.device, dtype=torch.float).scatter_add_(0, unique_idxs, points)
         centroids = centroids / labels_count.float().unsqueeze(-1)
     # 质心坐标
+
+
     return centroids, centroid_voxel_idxs, labels_count
 
 

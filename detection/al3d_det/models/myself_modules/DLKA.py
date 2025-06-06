@@ -8,11 +8,12 @@ import D3D
 import math
 from torch.nn import init
 
+# 没效果的模块
 class DeformConv(nn.Module):
 
-    def __init__(self,in_channels,output_channels,kernel_size=(3,3),stride=1,padding=1,
-                 dilation=1,groups=1,deformable_groups=1,bias=True):
-        super.__init__()
+    def __init__(self,in_channels,kernel_size=(3,3),stride=1,padding=1,
+                 dilation=1,groups=1,bias=True):
+        super().__init__()
         # 对核大小产生对应的偏移量 所以输出通道大小是 kernel_size
         self.offset_net = nn.Conv2d(
             in_channels=in_channels,

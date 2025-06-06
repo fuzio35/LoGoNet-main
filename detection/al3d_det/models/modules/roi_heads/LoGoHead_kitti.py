@@ -13,7 +13,6 @@ from al3d_det.utils.model_nms_utils import class_agnostic_nms
 from al3d_det.utils.attention_utils import TransformerEncoder, get_positional_encoder
 from al3d_det.models import fusion_modules 
 from .proposal_target_layer import ProposalTargetLayer
-from al3d_det.models.myself_modules import DLKA
 
 # ROI区域的头部
 # denseHead将锚框与GT进行匹配；得到正负样本的锚框
@@ -364,14 +363,14 @@ class VoxelAggregationHead(RoIHeadTemplate):
             self.roi_grid_pool_layers.append(pool_layer)
             c_out += sum([x[-1] for x in mlps])
 
-        # 自己添加的模块--1，在整合以后先预处理
-        self.DLKA = DLKA.DeformConvPack(
-            in_channels=128,
-            out_channels=128,
-            kernel_size=3,
-            stride=1,
-            padding=1,
-        )
+        # 自己添加的模块--1，在整合以后先预处理--没有效果
+        # self.DLKA = DLKA.DeformConvPack(
+        #     in_channels=128,
+        #     out_channels=128,
+        #     kernel_size=3,
+        #     stride=1,
+        #     padding=1,
+        # )
 
 
 
@@ -732,8 +731,8 @@ class VoxelAggregationHead(RoIHeadTemplate):
 
         # 最终特征 分类与回归
 
-        # 在这里加一个层，修改1
-        pooled_features = self.DLKA(pooled_features)
+        # 在这里加一个层，修改1---没有效果的修改，已删除
+        # pooled_features = self.DLKA(pooled_features)
 
 
 
