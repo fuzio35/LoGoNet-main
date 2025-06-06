@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 import torch.nn as nn
-import detection.al3d_det.models.myself_modules.DLKA
 
 # 上采样与下采样来来回回
 class BaseBEVBackbone(nn.Module):
