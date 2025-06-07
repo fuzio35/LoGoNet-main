@@ -13,7 +13,8 @@ from al3d_det.utils.model_nms_utils import class_agnostic_nms
 from al3d_det.utils.attention_utils import TransformerEncoder, get_positional_encoder
 from al3d_det.models import fusion_modules 
 from .proposal_target_layer import ProposalTargetLayer
-from al3d_det.models.myself_modules import DynamicFeatureFusion,
+from al3d_det.models.myself_modules import DynamicFeatureFusion
+from al3d_det.models.myself_modules.SCA import NAFBlock3D
 # ROI区域的头部
 # denseHead将锚框与GT进行匹配；得到正负样本的锚框
 # ROIhead是预测框与锚框进行匹配 防止对GT产生过拟合
@@ -374,7 +375,7 @@ class VoxelAggregationHead(RoIHeadTemplate):
         self.DFF = DynamicFeatureFusion.DFF(
             dim=128
         )
-        self.
+        self.NAFBlock = NAFBlock3D(128)
 
 
         # 如果启用注意力机制 就使用
@@ -713,14 +714,16 @@ class VoxelAggregationHead(RoIHeadTemplate):
                 pooled_features = pooled_features.view(batch_size_rcnn, -1, grid_size, grid_size, grid_size)
                 localgrid_densityfeat_fuse = localgrid_densityfeat_fuse.view(batch_size_rcnn, -1, grid_size, grid_size, grid_size)
                 # 两个输入都是 512 * 128 * 6 * 6 * 6
-                pooled_features = self.DFF(pooled_features,localgrid_densityfeat_fuse).view(pooled_features.size(0), pooled_features.size(1), -1)
+                pooled_features = self.DFF(pooled_features,localgrid_densityfeat_fuse)
+                pooled_features = self.NAFBlock(pooled_features)
+                pooled_features = pooled_features.view(pooled_features.size(0), pooled_features.size(1), -1)
                 # 最终结果是 512 * 216 * 128
                 pooled_features = pooled_features.permute(0, 2, 1).contiguous()
+                
 
 
 
-
-        # 位置编码模块
+        # 位置编码模块 这里才最终将PIE加入
         if self.pool_cfg.get('ATTENTION', {}).get('ENABLED'):
             src_key_padding_mask = None
             if self.pool_cfg.ATTENTION.get('MASK_EMPTY_POINTS'):
@@ -729,6 +732,7 @@ class VoxelAggregationHead(RoIHeadTemplate):
             positional_input = self.get_positional_input(batch_dict['points'], batch_dict['rois'], local_roi_grid_points)
             # Attention FDA模块
             attention_output = self.attention_head(pooled_features, positional_input, src_key_padding_mask) # (BxN, 6x6x6, C)
+
 
             # 加部分--FDA模块最后的加
             if self.pool_cfg.ATTENTION.get('COMBINE'):

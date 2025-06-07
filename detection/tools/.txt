@@ -6,3 +6,5 @@ python train.py --epochs 60 --cfg_file cfgs/det_model_cfgs/kitti/LoGoNet-kitti.y
 
 
 python -m al3d_det.datasets.kitti.kitti_dataset  create_kitti_infos tools/cfgs/det_dataset_cfgs/kitti_dataset_mm.yaml
+
+bash scripts/dist_train.sh 0,1,2,3,4,5,6,7,8,9 10 --cfg_file cfgs/det_model_cfgs/kitti/LoGoNet-kitti.yaml --extra_tag DFF_SCA --workers 0
