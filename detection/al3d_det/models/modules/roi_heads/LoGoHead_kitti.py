@@ -13,7 +13,7 @@ from al3d_det.utils.model_nms_utils import class_agnostic_nms
 from al3d_det.utils.attention_utils import TransformerEncoder, get_positional_encoder
 from al3d_det.models import fusion_modules 
 from .proposal_target_layer import ProposalTargetLayer
-
+from al3d_det.models.myself_modules import DynamicFeatureFusion
 # ROI区域的头部
 # denseHead将锚框与GT进行匹配；得到正负样本的锚框
 # ROIhead是预测框与锚框进行匹配 防止对GT产生过拟合
@@ -371,7 +371,9 @@ class VoxelAggregationHead(RoIHeadTemplate):
         #     stride=1,
         #     padding=1,
         # )
-
+        self.DFF = DynamicFeatureFusion.DFF(
+            dim=128
+        )
 
 
 
@@ -667,7 +669,7 @@ class VoxelAggregationHead(RoIHeadTemplate):
             targets_dict = self.assign_targets(batch_dict)
             batch_dict['rois'] = targets_dict['rois']
             batch_dict['roi_labels'] = targets_dict['roi_labels']
-        # RoI aware pooling
+        # RoI aware pooling FBG
         pooled_features, global_roi_grid_points, local_roi_grid_points, ball_idxs = self.roi_grid_pool(batch_dict)  # (BxN, 6x6x6, C)
         batch_size_rcnn = pooled_features.shape[0]
         # 是否启用密度查询
@@ -701,8 +703,20 @@ class VoxelAggregationHead(RoIHeadTemplate):
             localgrid_densityfeat_fuse = localgrid_densityfeat_fuse.reshape(pooled_features.shape[0], pooled_features.shape[1], 64)
             localgrid_densityfeat_fuse = self.up_ffn(localgrid_densityfeat_fuse.permute(0, 2, 1))
             if self.pool_cfg.DENSITYQUERY.get('COMBINE'):
-                
-                pooled_features = pooled_features + localgrid_densityfeat_fuse.permute(0, 2, 1)
+                # 这里是 LOF与GOF输出特征的加的地址
+                # 现在尝试进行修改
+                # 原代码
+                # pooled_features = pooled_features + localgrid_densityfeat_fuse.permute(0, 2, 1)
+
+                # 新代码
+                pooled_features = pooled_features.permute(0, 2, 1).contiguous()
+                pooled_features = pooled_features.view(batch_size_rcnn, -1, grid_size, grid_size, grid_size)
+                localgrid_densityfeat_fuse = localgrid_densityfeat_fuse.view(batch_size_rcnn, -1, grid_size, grid_size, grid_size)
+                pooled_features = self.DFF(pooled_features,localgrid_densityfeat_fuse).view(pooled_features.size(0), pooled_features.size(1), -1)
+                pooled_features = pooled_features.permute(0, 2, 1).contiguous()
+
+
+
 
         # 位置编码模块
         if self.pool_cfg.get('ATTENTION', {}).get('ENABLED'):
@@ -714,12 +728,10 @@ class VoxelAggregationHead(RoIHeadTemplate):
             # Attention FDA模块
             attention_output = self.attention_head(pooled_features, positional_input, src_key_padding_mask) # (BxN, 6x6x6, C)
 
-            # 加部分
+            # 加部分--FDA模块最后的加
             if self.pool_cfg.ATTENTION.get('COMBINE'):
                 # b*N,216,c
                 attention_output = pooled_features + attention_output
-
-
 
             # Permute
             grid_size = self.model_cfg.ROI_GRID_POOL.GRID_SIZE
@@ -805,7 +817,7 @@ class LoGoHeadKITTI(VoxelAggregationHead):
                     cur_coords[:, 1:4],
                     downsample_times=batch_dict['multi_scale_3d_strides'][feature_location],
                     voxel_size=self.voxel_size,
-                    point_cloud_range=self.point_cloud_range
+                    point_cloud_range=self.point_cloud_range 
                 )
                 cur_coords = cur_coords.type(torch.cuda.FloatTensor)
                 # 体素中心点替换体素坐标

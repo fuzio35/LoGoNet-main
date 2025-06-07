@@ -16,7 +16,7 @@ class AnchorHeadSingle(AnchorHeadTemplate):
         self.num_anchors_per_location = sum(self.num_anchors_per_location)
 
         # 修改2
-        self.compute = DLKA.deformable_LKA_Attention(input_channels)
+        # self.compute = DLKA.deformable_LKA_Attention(input_channels)
 
         # 分类conv
         self.conv_cls = nn.Conv2d(
@@ -49,7 +49,7 @@ class AnchorHeadSingle(AnchorHeadTemplate):
         # 拿到特征
         spatial_features_2d = data_dict['spatial_features_2d']
         # forward的修改
-        spatial_features_2d = self.compute(spatial_features_2d)
+        # spatial_features_2d = self.compute(spatial_features_2d)
         # 产生cls预测与box预测
         cls_preds = self.conv_cls(spatial_features_2d)
         box_preds = self.conv_box(spatial_features_2d)
