@@ -33,5 +33,5 @@ class LSKBlock(nn.Module):
 
         # 生成注意力图后进行元素级乘法
         attn = attn1 * sig[:, 0, :, :,:].unsqueeze(1) + attn2 * sig[:, 1, :, :,:].unsqueeze(1)
-        attn = self.conv(attn)
+        attn = self.conv3(attn)
         return x * attn
