@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch
 import torch.nn as nn
 
-
+# 效果不大
 class LayerNormFunction3D(torch.autograd.Function):
 
     @staticmethod

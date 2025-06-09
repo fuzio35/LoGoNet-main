@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+from al3d_det.models.myself_modules import LSK
 
 # 一个很简单的模块，负责特征融合
 class DFF(nn.Module):
@@ -17,6 +18,7 @@ class DFF(nn.Module):
         self.conv1 = nn.Conv3d(dim, 1, kernel_size=1, stride=1, bias=True)
         self.conv2 = nn.Conv3d(dim, 1, kernel_size=1, stride=1, bias=True)
         self.nonlin = nn.Sigmoid()
+        self.LSK = LSK.LSKBlock(dim)
 
     def forward(self, x, skip):
         output = torch.cat([x, skip], dim=1)
@@ -28,4 +30,5 @@ class DFF(nn.Module):
         att = self.conv1(x) + self.conv2(skip)
         att = self.nonlin(att)
         output = output * att
+        output = self.LSK(output)
         return output
