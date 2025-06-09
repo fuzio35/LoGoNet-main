@@ -14,6 +14,8 @@ from al3d_det.utils.attention_utils import TransformerEncoder, get_positional_en
 from al3d_det.models import fusion_modules 
 from .proposal_target_layer import ProposalTargetLayer
 from al3d_det.models.myself_modules import DynamicFeatureFusion
+from al3d_det.models.myself_modules.SCA import NAFBlock3D
+from al3d_det.models.myself_modules import DynamicFeatureFusion
 # ROI区域的头部
 # denseHead将锚框与GT进行匹配；得到正负样本的锚框
 # ROIhead是预测框与锚框进行匹配 防止对GT产生过拟合
@@ -374,7 +376,7 @@ class VoxelAggregationHead(RoIHeadTemplate):
         self.DFF = DynamicFeatureFusion.DFF(
             dim=128
         )
-
+        self.NAFBlock = NAFBlock3D(128)
 
 
         # 如果启用注意力机制 就使用
@@ -712,13 +714,17 @@ class VoxelAggregationHead(RoIHeadTemplate):
                 pooled_features = pooled_features.permute(0, 2, 1).contiguous()
                 pooled_features = pooled_features.view(batch_size_rcnn, -1, grid_size, grid_size, grid_size)
                 localgrid_densityfeat_fuse = localgrid_densityfeat_fuse.view(batch_size_rcnn, -1, grid_size, grid_size, grid_size)
-                pooled_features = self.DFF(pooled_features,localgrid_densityfeat_fuse).view(pooled_features.size(0), pooled_features.size(1), -1)
+                # 两个输入都是 512 * 128 * 6 * 6 * 6
+                pooled_features = self.DFF(pooled_features,localgrid_densityfeat_fuse)
+                pooled_features = self.NAFBlock(pooled_features)
+                pooled_features = pooled_features.view(pooled_features.size(0), pooled_features.size(1), -1)
+                # 最终结果是 512 * 216 * 128
                 pooled_features = pooled_features.permute(0, 2, 1).contiguous()
+                
 
 
 
-
-        # 位置编码模块
+        # 位置编码模块 这里才最终将PIE加入
         if self.pool_cfg.get('ATTENTION', {}).get('ENABLED'):
             src_key_padding_mask = None
             if self.pool_cfg.ATTENTION.get('MASK_EMPTY_POINTS'):
@@ -817,7 +823,7 @@ class LoGoHeadKITTI(VoxelAggregationHead):
                     cur_coords[:, 1:4],
                     downsample_times=batch_dict['multi_scale_3d_strides'][feature_location],
                     voxel_size=self.voxel_size,
-                    point_cloud_range=self.point_cloud_range
+                    point_cloud_range=self.point_cloud_range 
                 )
                 cur_coords = cur_coords.type(torch.cuda.FloatTensor)
                 # 体素中心点替换体素坐标

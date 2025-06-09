@@ -1,6 +1,6 @@
 DATASET: 'KittiDataset'
-DATA_PATH: '/mnt/d/students/Fu_zian/dataset/KITTI/kitti/'
-
+DATA_PATH: '/mnt/data6/cyc/kitti/'
+# DATA_PATH: '/mnt/d/students/Fu_zian/dataset/KITTI/kitti/'
 POINT_CLOUD_RANGE: [0, -40, -3, 70.4, 40, 1]
 
 DATA_SPLIT: {
