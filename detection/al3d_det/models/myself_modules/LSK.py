@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+# 几乎没有效果
 class LSKBlock(nn.Module):
     def __init__(self,dim):
         super().__init__()
