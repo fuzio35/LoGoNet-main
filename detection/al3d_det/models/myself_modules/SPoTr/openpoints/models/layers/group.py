@@ -7,7 +7,7 @@ import copy, logging
 import torch
 import torch.nn as nn
 from torch.autograd import Function
-from openpoints.cpp import pointnet2_cuda
+from ....openpoints.cpp import pointnet2_cuda
 
 class KNN(nn.Module):
     def __init__(self, neighbors, transpose_mode=True):

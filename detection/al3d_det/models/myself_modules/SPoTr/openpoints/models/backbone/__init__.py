@@ -1,1 +1,1 @@
-from .spotr import SPoTrEncoder, SPoTrDecoder, SPoTrPartDecoder
+from .spotr import SPoTrEncoder

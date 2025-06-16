@@ -14,8 +14,7 @@ from al3d_det.utils.attention_utils import TransformerEncoder, get_positional_en
 from al3d_det.models import fusion_modules 
 from .proposal_target_layer import ProposalTargetLayer
 from al3d_det.models.myself_modules import DynamicFeatureFusion
-# from al3d_det.models.myself_modules.SCA import NAFBlock3D
-from al3d_det.models.myself_modules import DynamicFeatureFusion
+from al3d_det.models.myself_modules import SelfPositionTransformer
 # ROI区域的头部
 # denseHead将锚框与GT进行匹配；得到正负样本的锚框
 # ROIhead是预测框与锚框进行匹配 防止对GT产生过拟合
@@ -376,6 +375,7 @@ class VoxelAggregationHead(RoIHeadTemplate):
         self.DFF = DynamicFeatureFusion.DFF(
             dim=128
         )
+        self.fusion_Roi_and_Grid = SelfPositionTransformer.SPoTrRoIEncoder()
         # self.NAFBlock = NAFBlock3D(128)
 
 
@@ -631,8 +631,6 @@ class VoxelAggregationHead(RoIHeadTemplate):
     def get_positional_input(self, points, rois, local_roi_grid_points):
         # local_roi_grid_points --本质上是网格坐标
         # 获取了每个框在每个网格的点数了
-
-        # 在这里进行新的修改，这里是处理每一个网格的点的密度与数量
         # 返回的是 体素的质心与密度
         points_per_part = density_utils.find_num_points_per_part_multi(points,
                                                                        rois,
@@ -660,6 +658,28 @@ class VoxelAggregationHead(RoIHeadTemplate):
         :return:
         """
         # 先获取GOF特征
+        # 对应：帧id 校准参数 GT 2DGT 点
+        # ['frame_id', 'calib', 'gt_boxes', 'gt_boxes2d', 'points',
+        #   图像数据 雷达到相机变换矩阵 相机到图像变换矩阵 图像形状#
+        #   'images', 'trans_lidar_to_cam', 'trans_cam_to_img', 'image_shape',
+        # 逆变换矩阵 雷达点的投影点 是否使用领先xyz 体素数据
+        #  'aug_matrix_inv', 'points_2d', 'use_lead_xyz', 'voxels',
+        #  体素坐标 每个体素点数量 batch大小 图像特征
+        #  'voxel_coords', 'voxel_num_points', 'batch_size', 'image_features',
+        # 体素特征 点云经过系数处理后的张量  下采样步长
+        #  'voxel_features', 'encoded_spconv_tensor', 'encoded_spconv_tensor_stride',
+        #  多尺度特征列表  多尺度特征步长  空间特征
+        #  'multi_scale_3d_features', 'multi_scale_3d_strides', 'spatial_features',
+        #  空间特征步长  空间特征2D 分类预测
+        #  'spatial_features_stride', 'spatial_features_2d', 'batch_cls_preds',
+        #  回归预测结果 归一化预测结果
+        #  'batch_box_preds', 'cls_preds_normalized'
+
+
+        # points -- 原始点云  voxel -- 体素，包含了体素中保留的原始点云  voxel_feature--体素特征
+        # image_feature-- 图像特征 encoded_spconv_tensor: 稀疏卷积（Sparse Convolution）编码后的张量
+        # spatial_features: 3D Backbone生成的空间特征 spatial_features_2d: 2D特征
+        # multi_scale_3d_features多尺度特征，包含'x_conv1', 'x_conv2', 'x_conv3', 'x_conv4'
         batch_dict['point_features'], batch_dict['point_coords'] = self.get_point_voxel_features(batch_dict)
 
         # 生成ROI区域
@@ -671,7 +691,7 @@ class VoxelAggregationHead(RoIHeadTemplate):
             targets_dict = self.assign_targets(batch_dict)
             batch_dict['rois'] = targets_dict['rois']
             batch_dict['roi_labels'] = targets_dict['roi_labels']
-        # RoI aware pooling FBG
+        # RoI aware pooling FBG  -- 产生FBG特征
         pooled_features, global_roi_grid_points, local_roi_grid_points, ball_idxs = self.roi_grid_pool(batch_dict)  # (BxN, 6x6x6, C)
         batch_size_rcnn = pooled_features.shape[0]
         # 是否启用密度查询
@@ -679,7 +699,6 @@ class VoxelAggregationHead(RoIHeadTemplate):
         if self.pool_cfg.get('DENSITYQUERY', {}).get('ENABLED'):
             src_key_padding_mask = None
             grid_size = self.model_cfg.ROI_GRID_POOL.GRID_SIZE
-
             # 得到密度特征
             # 统计每个ROI的点的数量 产生FL
             localgrid_densityfeat = self.get_localgrid_input(batch_dict['points'], batch_dict['rois'], local_roi_grid_points)
@@ -688,6 +707,9 @@ class VoxelAggregationHead(RoIHeadTemplate):
             # 作为K V
             localgrid_densityfeat = localgrid_densityfeat.reshape(-1, 64)
 
+            # 先对所有点进行一下特征处理
+             # 在这里进行新的修改，这里是处理每一个网格的点的密度与数量
+            points_per_roi,points_per_roi_mask = density_utils.get_fixed_length_roi_points(batch_dict['points'], batch_dict['rois'],512,self.pool_cfg.ATTENTION.MAX_NUM_BOXES,1)
 
             grid_coords_idlist = []
             for idx in range(batch_dict['batch_size']):
@@ -704,12 +726,12 @@ class VoxelAggregationHead(RoIHeadTemplate):
             localgrid_densityfeat_fuse = self.crossattention_pointhead(batch_dict, point_features=localgrid_densityfeat, point_coords=grid_coords, layer_name="layer1")
             localgrid_densityfeat_fuse = localgrid_densityfeat_fuse.reshape(pooled_features.shape[0], pooled_features.shape[1], 64)
             localgrid_densityfeat_fuse = self.up_ffn(localgrid_densityfeat_fuse.permute(0, 2, 1))
+            localgrid_densityfeat_fuse = self.fusion_Roi_and_Grid(points_per_roi,localgrid_densityfeat_fuse)
             if self.pool_cfg.DENSITYQUERY.get('COMBINE'):
                 # 这里是 LOF与GOF输出特征的加的地址
                 # 现在尝试进行修改
                 # 原代码
                 # pooled_features = pooled_features + localgrid_densityfeat_fuse.permute(0, 2, 1)
-
                 # 新代码
                 pooled_features = pooled_features.permute(0, 2, 1).contiguous()
                 pooled_features = pooled_features.view(batch_size_rcnn, -1, grid_size, grid_size, grid_size)

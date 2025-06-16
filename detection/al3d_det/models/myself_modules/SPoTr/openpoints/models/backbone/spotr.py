@@ -4,10 +4,6 @@ https://arxiv.org/pdf/2303.16450
 Jinyoung Park, Sanghyeok Lee, Sihyeon Kim, Yunyang Xiong, Hyunwoo J. Kim
 """
 """
-Our codes are based on OpenPoints.
-PointNeXt: Revisiting PointNet++ with Improved Training and Scaling Strategies
-https://arxiv.org/abs/2206.04670
-Guocheng Qian, Yuchen Li, Houwen Peng, Jinjie Mai, Hasan Abed Al Kader Hammoud, Mohamed Elhoseiny, Bernard Ghanem
 """
 from typing import List, Type
 import logging
@@ -468,6 +464,8 @@ class SPoTrEncoder(nn.Module):
         logging.info(f'radius: {self.radii},\n nsample: {self.nsample}')
         # double width after downsampling.
         channels = []
+
+        # channel计算每一层的输出特征，后一层是前一层的二倍
         for stride in strides:
             if stride != 1:
                 width *= 2
@@ -475,8 +473,8 @@ class SPoTrEncoder(nn.Module):
         # 创建encoder
         encoder = []
         for i in range(len(blocks)):
-            group_args.radius = self.radii[i]
-            group_args.nsample = self.nsample[i]
+            group_args['radius'] = self.radii[i]
+            group_args['nsample'] = self.nsample[i]
             encoder.append(self._make_enc(
                 block, channels[i], blocks[i], stride=strides[i], group_args=group_args,
                 is_head=i == 0 and strides[i] == 1, 
@@ -485,18 +483,25 @@ class SPoTrEncoder(nn.Module):
         self.encoder = nn.Sequential(*encoder)
         self.out_channels = channels[-1]
         self.channel_list = channels
-        
+
+    # 将传入的参数转化为一个完整的列表，匹配每一层
+    # stride为4代表下采样
     def _to_full_list(self, param, param_scaling=1):
         # param can be: radius, nsample
         param_list = []
         if isinstance(param, List):
+            # 如果本身就是一个list
             # make param a full list
             for i, value in enumerate(param):
                 value = [value] if not isinstance(value, List) else value
+                # block[i]代表有几个模块，所以要对应的有对应的 长度
                 if len(value) != self.blocks[i]:
                     value += [value[-1]] * (self.blocks[i] - len(value))
                 param_list.append(value)
+        # 最终产生对每层的每个模块的一个比例
         else:  # radius is a scalar (in this case, only initial raidus is provide), then create a list (radius for each block)
+            # 传递了一个标量
+            # 按层扩大
             for i, stride in enumerate(self.strides):
                 if stride == 1:
                     param_list.append([param] * self.blocks[i])
@@ -509,10 +514,10 @@ class SPoTrEncoder(nn.Module):
     def _make_enc(self, block, channels, blocks, stride, group_args, is_head=False,
                   gamma=16, num_gp=8, tau_delta=1, tau_local=1, is_cls=False):
         layers = []
-        radii = group_args.radius
-        nsample = group_args.nsample
-        group_args.radius = radii[0]
-        group_args.nsample = nsample[0]
+        radii = group_args['radius']
+        nsample = group_args['nsample']
+        group_args['radius'] = radii[0]
+        group_args['nsample'] = nsample[0]
         # 添加SPALPA模块
         layers.append(SPALPA(self.in_channels, channels,
                                      self.num_layers if not is_head else 1, stride,
@@ -526,8 +531,8 @@ class SPoTrEncoder(nn.Module):
         self.in_channels = channels
         # 根据需要添加LPAMLP模块
         for i in range(1, blocks):
-            group_args.radius = radii[i]
-            group_args.nsample = nsample[i]
+            group_args['radius'] = radii[i]
+            group_args['nsample'] = nsample[i]
             layers.append(block(self.in_channels,
                                 aggr_args=self.aggr_args,
                                 norm_args=self.norm_args, act_args=self.act_args, group_args=group_args,
@@ -567,167 +572,3 @@ class SPoTrEncoder(nn.Module):
 
     def forward(self, p0, x0=None):
         self.forward_seg_feat(p0, x0)
-
-@MODELS.register_module()
-class SPoTrDecoder(nn.Module):
-    def __init__(self,
-                 encoder_channel_list: List[int],
-                 decoder_layers: int = 2,
-                 decoder_stages: int = 4, 
-                 **kwargs
-                 ):
-        super().__init__()
-        self.decoder_layers = decoder_layers
-        self.in_channels = encoder_channel_list[-1]
-        skip_channels = encoder_channel_list[:-1]
-        if len(skip_channels) < decoder_stages:
-            skip_channels.insert(0, kwargs.get('in_channels', 3))
-        # the output channel after interpolation
-        fp_channels = encoder_channel_list[:decoder_stages]
-
-        n_decoder_stages = len(fp_channels)
-        decoder = [[] for _ in range(n_decoder_stages)]
-        for i in range(-1, -n_decoder_stages - 1, -1):
-            decoder[i] = self._make_dec(
-                skip_channels[i], fp_channels[i])
-        self.decoder = nn.Sequential(*decoder)
-        self.out_channels = fp_channels[-n_decoder_stages]
-
-    def _make_dec(self, skip_channels, fp_channels):
-        layers = []
-        mlp = [skip_channels + self.in_channels] + \
-              [fp_channels] * self.decoder_layers
-        layers.append(FeaturePropogation(mlp))
-        self.in_channels = fp_channels
-        return nn.Sequential(*layers)
-
-    def forward(self, p, f):
-        for i in range(-1, -len(self.decoder) - 1, -1):
-            f[i - 1] = self.decoder[i][1:](
-                [p[i], self.decoder[i][0]([p[i - 1], f[i - 1]], [p[i], f[i]])])[1]
-        return f[-len(self.decoder) - 1]
-
-
-
-@MODELS.register_module()
-class SPoTrPartDecoder(nn.Module):
-    def __init__(self,
-                 encoder_channel_list: List[int],
-                 decoder_layers: int = 2,
-                 decoder_blocks: List[int] = [1, 1, 1, 1],
-                 decoder_strides: List[int] = [4, 4, 4, 4],
-                 act_args: str = 'relu',
-                 num_classes: int = 16,
-                 **kwargs
-                 ):
-        super().__init__()
-        self.decoder_layers = decoder_layers
-        self.in_channels = encoder_channel_list[-1]
-        skip_channels = encoder_channel_list[:-1]
-        fp_channels = encoder_channel_list[:-1]
-        
-        # the following is for decoder blocks
-        self.conv_args = kwargs.get('conv_args', None)
-        radius_scaling = kwargs.get('radius_scaling', 2)
-        nsample_scaling = kwargs.get('nsample_scaling', 1)
-        block = kwargs.get('block', 'LPAMLP')
-        if isinstance(block, str):
-            block = eval(block)
-        self.blocks = decoder_blocks
-        self.strides = decoder_strides
-        self.norm_args = kwargs.get('norm_args', {'norm': 'bn'}) 
-        self.act_args = kwargs.get('act_args', {'act': 'relu'}) 
-        self.expansion = kwargs.get('expansion', 4)
-        radius = kwargs.get('radius', 0.1)
-        nsample = kwargs.get('nsample', 16)
-        self.radii = self._to_full_list(radius, radius_scaling)
-        self.nsample = self._to_full_list(nsample, nsample_scaling)
-        self.num_classes = num_classes
-        self.use_res = kwargs.get('use_res', True)
-        group_args = kwargs.get('group_args', {'NAME': 'ballquery'})
-        self.aggr_args = kwargs.get('aggr_args', 
-                                    {'feature_type': 'dp_fj', "reduction": 'max'}
-                                    )  
-
-        # global features
-        self.global_conv2 = nn.Sequential(
-            create_convblock1d(fp_channels[-1] * 2, 128,
-                                norm_args=None,
-                                act_args=act_args))
-        self.global_conv1 = nn.Sequential(
-            create_convblock1d(fp_channels[-2] * 2, 64,
-                                norm_args=None,
-                                act_args=act_args))
-        skip_channels[0] += 64 + 128 + 16  # shape categories labels
-
-
-        n_decoder_stages = len(fp_channels)
-        decoder = [[] for _ in range(n_decoder_stages)]
-        for i in range(-1, -n_decoder_stages - 1, -1):
-            group_args.radius = self.radii[i]
-            group_args.nsample = self.nsample[i]
-            decoder[i] = self._make_dec(
-                skip_channels[i], fp_channels[i], group_args=group_args, block=block, blocks=self.blocks[i])
-
-        self.decoder = nn.Sequential(*decoder)
-        self.out_channels = fp_channels[-n_decoder_stages]
-
-    def _make_dec(self, skip_channels, fp_channels, group_args=None, block=None, blocks=1):
-        layers = []
-        radii = group_args.radius
-        nsample = group_args.nsample
-        mlp = [skip_channels + self.in_channels] + \
-              [fp_channels] * self.decoder_layers
-        layers.append(FeaturePropogation(mlp, act_args=self.act_args))
-        self.in_channels = fp_channels
-        for i in range(1, blocks):
-            group_args.radius = radii[i]
-            group_args.nsample = nsample[i]
-            layers.append(block(self.in_channels,
-                                aggr_args=self.aggr_args,
-                                norm_args=self.norm_args, act_args=self.act_args, group_args=group_args,
-                                conv_args=self.conv_args, expansion=self.expansion,
-                                use_res=self.use_res
-                                ))
-        return nn.Sequential(*layers)
-
-    def _to_full_list(self, param, param_scaling=1):
-        # param can be: radius, nsample
-        param_list = []
-        if isinstance(param, List):
-            # make param a full list
-            for i, value in enumerate(param):
-                value = [value] if not isinstance(value, List) else value
-                if len(value) != self.blocks[i]:
-                    value += [value[-1]] * (self.blocks[i] - len(value))
-                param_list.append(value)
-        else:  # radius is a scalar (in this case, only initial raidus is provide), then create a list (radius for each block)
-            for i, stride in enumerate(self.strides):
-                if stride == 1:
-                    param_list.append([param] * self.blocks[i])
-                else:
-                    param_list.append(
-                        [param] + [param * param_scaling] * (self.blocks[i] - 1))
-                    param *= param_scaling
-        return param_list
-
-    def forward(self, p, f, cls_label):
-        B, N = p[0].shape[0:2]
-
-        emb1 = self.global_conv1(f[-2])
-        emb1 = emb1.max(dim=-1, keepdim=True)[0]  # bs, 64, 1
-        emb2 = self.global_conv2(f[-1])
-        emb2 = emb2.max(dim=-1, keepdim=True)[0]  # bs, 128, 1
-        cls_one_hot = torch.zeros((B, self.num_classes), device=p[0].device)
-        cls_one_hot = cls_one_hot.scatter_(1, cls_label, 1).unsqueeze(-1)
-        cls_one_hot = torch.cat((emb1, emb2, cls_one_hot), dim=1)
-        cls_one_hot = cls_one_hot.expand(-1, -1, N)
-
-        for i in range(-1, -len(self.decoder), -1):
-            f[i - 1] = self.decoder[i][1:](
-                [p[i-1], self.decoder[i][0]([p[i - 1], f[i - 1]], [p[i], f[i]])])[1]
-
-        f[-len(self.decoder) - 1] = self.decoder[0][1:](
-            [p[1], self.decoder[0][0]([p[1], torch.cat([cls_one_hot, f[1]], 1)], [p[2], f[2]])])[1]
-
-        return f[-len(self.decoder) - 1]

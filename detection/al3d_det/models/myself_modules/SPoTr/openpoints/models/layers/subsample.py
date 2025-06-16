@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch.autograd import Function
 import math
-from openpoints.cpp.pointnet2_batch import pointnet2_cuda
+from .... openpoints.cpp.pointnet2_batch import pointnet2_cuda
 
 
 class BaseSampler(ABC):

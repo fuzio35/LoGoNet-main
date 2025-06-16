@@ -4,7 +4,7 @@ import torch
 
 from . import common_utils, voxel_aggregation_utils
 from al3d_utils.ops.roiaware_pool3d import roiaware_pool3d_utils
-
+from al3d_utils.ops.pointnet2.pointnet2_stack.pointnet2_modules import pointnet2_utils
 
 
 
@@ -87,13 +87,13 @@ def find_num_points_per_part_multi(batch_points, batch_boxes, grid_size, max_num
         points_per_parts: (B, O, G, G, G)
     """
     assert grid_size > 0
-
     # 取出batch
     batch_idx = batch_points[:, 0]
     # 取出点云坐标
     batch_points = batch_points[:, 1:4]
 
-    # 每个ROI的每个Voxel的数量
+
+
     points_per_parts = []
     for i in range(batch_boxes.shape[0]):
         # 对每一个盒子 取出当前掩码的
@@ -169,3 +169,73 @@ def find_num_points_per_part_multi(batch_points, batch_boxes, grid_size, max_num
         points_per_parts.append(points_per_part_dense)
 
     return torch.stack(points_per_parts)
+
+# get_fixed_length_roi_points(afasd, batch_boxes, 256, max_num_boxes,1)
+# 得到每个ROI对应的特征与点
+def get_fixed_length_roi_points(batch_points, batch_boxes,
+                                max_points_per_boxes,max_nums_roi_boxes,
+                                other_feature_dims):
+
+    # BATCH 与 ROI总数
+    batch_size = batch_boxes.shape[0]
+    total_rois = batch_boxes.shape[0] * batch_boxes.shape[1]
+
+    #初始化存储 存储每个ROI的点
+    points_per_roi = torch.zeros(
+        (total_rois, max_points_per_boxes, other_feature_dims+3),
+        dtype=batch_points.dtype,
+        device=batch_points.device
+    )
+    # 掩码 代表说当前内部多少点是有效的
+    points_per_roi_mask = torch.zeros(
+        (total_rois, max_points_per_boxes),
+        dtype=torch.bool,
+        device=batch_points.device
+    )
+    #提取所有点的batch与特征
+    batch_points_idx_all = batch_points[:,0]
+    all_points_xyz_feat = batch_points[:, 1:]
+
+
+    # 记录当前ROI在展平的位置
+    current_roi_idx_in_flat_batch = 0
+    # 开始遍历每个batch
+    for i in range(batch_size):
+        # 场景掩码与当前ROI和当前点
+        current_scenes_mask = (batch_points_idx_all == i)
+        current_scenes_points_feat = all_points_xyz_feat[current_scenes_mask]
+        current_scenes_boxes = batch_boxes[i]
+        # 取出点坐标
+        current_scenes_points_xyz = current_scenes_points_feat[:, 0:3]
+        # 如果没有点或者没有ROI 跳过
+        if current_scenes_points_xyz.shape[0] == 0 or current_scenes_boxes.size(0) == 0 :
+            current_roi_idx_in_flat_batch += current_scenes_boxes.size(0)
+            continue
+
+        # 获取点所在的ROI索引
+        roi_indices_for_each_point = roiaware_pool3d_utils.points_in_multi_boxes_gpu \
+            (current_scenes_points_xyz.unsqueeze(0), current_scenes_boxes.unsqueeze(0), max_nums_roi_boxes).squeeze(0)
+
+        #遍历每个ROI
+        for roi_idx in range(current_scenes_boxes.shape[0]):
+            # 找到ROI内的点
+            mask_points_in_now_roi = (roi_indices_for_each_point == roi_idx).any(dim=1)
+            points_in_this_roi_data_xyz = current_scenes_points_xyz[mask_points_in_now_roi]
+            points_in_this_roi_data_feature = current_scenes_points_feat[mask_points_in_now_roi]
+            # 判断是否采样
+            num_points_in_this_roi = points_in_this_roi_data_xyz.shape[0]
+            if num_points_in_this_roi > 0 :
+                #要么填充要么采样
+                if num_points_in_this_roi > max_points_per_boxes:
+                    points_in_this_roi_data_xyz = points_in_this_roi_data_xyz.unsqueeze(0)
+                    sample_idx = pointnet2_utils.furthest_point_sample(points_in_this_roi_data_xyz, max_points_per_boxes)
+                    sample_idx = sample_idx.squeeze(0)
+                    sampled_points = points_in_this_roi_data_feature[sample_idx.long()]
+                    points_per_roi[current_roi_idx_in_flat_batch,:max_points_per_boxes] = sampled_points
+                    points_per_roi_mask[current_roi_idx_in_flat_batch,:max_points_per_boxes] = True
+                else:
+                    points_per_roi[current_roi_idx_in_flat_batch,:num_points_in_this_roi] = points_in_this_roi_data_feature
+                    points_per_roi_mask[current_roi_idx_in_flat_batch,:num_points_in_this_roi] = True
+            current_roi_idx_in_flat_batch += 1
+    points_per_roi = points_per_roi.contiguous()
+    return points_per_roi,points_per_roi_mask
