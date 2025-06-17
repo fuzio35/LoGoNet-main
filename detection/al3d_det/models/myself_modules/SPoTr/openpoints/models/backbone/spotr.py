@@ -49,7 +49,7 @@ def get_aggregation_features(p, dp, f, fj, feature_type='dp_fj'):
 def new_attention(x_i, y_j=None, attn=None, aux_attn= None, tau= 1):
     if len(x_i.shape) == 3:
         # 3D输入--qk
-        attn = torch.bmm(y_j.transpose(1,2).contiguous(), x_i).detach()
+        attn = torch.bmm(y_j.transpose(1,2).contiguous(), x_i)#detach()
         attn = nn.functional.softmax(attn, -1)#(b,m,n)
         attn = attn*aux_attn
 
@@ -94,7 +94,7 @@ class SPALPA(nn.Module):
                  tau_delta=1, # softmax温度系数
                  tau_local=1,
                  is_cls=False,
-                 **kwargs
+                 idx_now=0,**kwargs
                  ):
         super().__init__()
         self.stride = stride
@@ -110,8 +110,8 @@ class SPALPA(nn.Module):
         self.use_global = True if (not self.is_head) and (not self.all_aggr) else False
         
         # 自适应系数，控制融合比例
-        self.alpha=nn.Parameter(torch.zeros((1,), dtype=torch.float32)) 
-        
+        # self.alpha=nn.Parameter(torch.zeros((1,), dtype=torch.float32))
+        self.alpha = nn.Parameter(torch.tensor(0.5)) if idx_now!=0 else None
         # 如果步长>1 就中间层变小 -- 残差！
         mid_channel = out_channels // 2 if stride > 1 else out_channels
         # 一个字典以计算实际维度
@@ -223,7 +223,8 @@ class SPALPA(nn.Module):
                 # 先处理输入特征 得到注意力的输入
                 fj = get_aggregation_features(new_p, dp, fi, fj, feature_type=self.feature_type)
                 # 计算注意力权重
-                attn = self.attn_local(fj) if not self.is_cls else self.convs(fj).detach()
+                # attn = self.attn_local(fj) if not self.is_cls else self.convs(fj).detach()
+                attn = self.attn_local(fj) if not self.is_cls else self.convs(fj)
                 # 得到局部结果 --CWPA
                 updated_local_f = new_attention(self.convs(fj), attn = attn, tau=self.tau_local)
 
@@ -249,7 +250,8 @@ class SPALPA(nn.Module):
                     # 生成CWPA所需的特征--最终聚合
                     global_fj = get_aggregation_features(new_p, global_dp, fi, global_fj, feature_type=self.feature_type) # (b,d+3,n',m)
                     # 得到最终结果的注意力
-                    global_attn = self.attn_global(global_fj) if not self.is_cls else self.gconvs(global_fj).detach()
+                    # global_attn = self.attn_global(global_fj) if not self.is_cls else self.gconvs(global_fj).detach()
+                    global_attn = self.attn_global(global_fj) if not self.is_cls else self.gconvs(global_fj)
                     # 得到SPA的结果
                     updated_global_f = new_attention(self.gconvs(global_fj), attn = global_attn, tau=self.tau_delta)# (b,d+3,n',m) -> (b,d',n')
 
@@ -396,8 +398,7 @@ class LPAMLP(nn.Module):
         self.ffn = nn.Sequential(*ffn)
         self.act = create_act(act_args)
 
-        self.alpha=nn.Parameter(torch.zeros((1,), dtype=torch.float32)) 
-        
+
     def forward(self, pf):
         p,f = pf
         
@@ -478,7 +479,7 @@ class SPoTrEncoder(nn.Module):
             encoder.append(self._make_enc(
                 block, channels[i], blocks[i], stride=strides[i], group_args=group_args,
                 is_head=i == 0 and strides[i] == 1, 
-                gamma=gamma, num_gp=num_gp, tau_delta=tau_delta, tau_local=tau_local, is_cls=is_cls
+                gamma=gamma, num_gp=num_gp, tau_delta=tau_delta, tau_local=tau_local, is_cls=is_cls,idx_now=i,
             ))
         self.encoder = nn.Sequential(*encoder)
         self.out_channels = channels[-1]
@@ -512,7 +513,7 @@ class SPoTrEncoder(nn.Module):
         return param_list
 
     def _make_enc(self, block, channels, blocks, stride, group_args, is_head=False,
-                  gamma=16, num_gp=8, tau_delta=1, tau_local=1, is_cls=False):
+                  gamma=16, num_gp=8, tau_delta=1, tau_local=1, is_cls=False,idx_now=0):
         layers = []
         radii = group_args['radius']
         nsample = group_args['nsample']
@@ -524,7 +525,7 @@ class SPoTrEncoder(nn.Module):
                                      group_args=group_args, norm_args=self.norm_args, act_args=self.act_args, conv_args=self.conv_args,
                                      sampler=self.sampler, use_res=self.use_res, is_head=is_head,
                                      gamma=gamma,
-                                     num_gp=num_gp, tau_delta=tau_delta, tau_local=tau_local, is_cls=is_cls,
+                                     num_gp=num_gp, tau_delta=tau_delta, tau_local=tau_local, is_cls=is_cls,idx_now=idx_now,
                                      **self.aggr_args
                                      ))
      
@@ -554,6 +555,11 @@ class SPoTrEncoder(nn.Module):
             p.append(p0)
             f.append(f0)
         dicts = {"p":p, "f" :f}
+
+        for name, param in self.named_parameters():
+            if param.requires_grad and param.grad is None:
+                print(f"-=-=-=-=-= 没有参与反传的参数: {name}")
+
         # 返回f就好了
         return f0.squeeze(-1)
 

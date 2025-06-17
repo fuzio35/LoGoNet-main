@@ -64,4 +64,9 @@ class SPoTrRoIEncoder(nn.Module):
         out = self.norm1(attn_out+GDF_feat)
         out = self.norm2(self.ffn(out)+out)
         out = out.permute(0,2,1).contiguous()
+
+        for name, param in self.named_parameters():
+            if param.requires_grad and param.grad is None:
+                print(f"❌ 没有参与反传的参数: {name}")
+
         return out

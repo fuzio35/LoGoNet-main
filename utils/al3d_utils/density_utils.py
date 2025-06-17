@@ -180,22 +180,14 @@ def get_fixed_length_roi_points(batch_points, batch_boxes,
     batch_size = batch_boxes.shape[0]
     total_rois = batch_boxes.shape[0] * batch_boxes.shape[1]
 
+
     #初始化存储 存储每个ROI的点
-    points_per_roi = torch.zeros(
-        (total_rois, max_points_per_boxes, other_feature_dims+3),
-        dtype=batch_points.dtype,
-        device=batch_points.device
-    )
-    # 掩码 代表说当前内部多少点是有效的
-    points_per_roi_mask = torch.zeros(
-        (total_rois, max_points_per_boxes),
-        dtype=torch.bool,
-        device=batch_points.device
-    )
+    points_per_roi = []
+
     #提取所有点的batch与特征
     batch_points_idx_all = batch_points[:,0]
     all_points_xyz_feat = batch_points[:, 1:]
-
+    channel = all_points_xyz_feat.shape[-1]
 
     # 记录当前ROI在展平的位置
     current_roi_idx_in_flat_batch = 0
@@ -206,10 +198,13 @@ def get_fixed_length_roi_points(batch_points, batch_boxes,
         current_scenes_points_feat = all_points_xyz_feat[current_scenes_mask]
         current_scenes_boxes = batch_boxes[i]
         # 取出点坐标
-        current_scenes_points_xyz = current_scenes_points_feat[:, 0:3]
+        current_scenes_points_xyz = current_scenes_points_feat[:, :3]
         # 如果没有点或者没有ROI 跳过
         if current_scenes_points_xyz.shape[0] == 0 or current_scenes_boxes.size(0) == 0 :
-            current_roi_idx_in_flat_batch += current_scenes_boxes.size(0)
+            points_per_roi.append(
+                torch.zeros((max_points_per_boxes, 3 + other_feature_dims),
+                                                      device=batch_points.device, dtype=batch_points.dtype)
+            )
             continue
 
         # 获取点所在的ROI索引
@@ -229,13 +224,24 @@ def get_fixed_length_roi_points(batch_points, batch_boxes,
                 if num_points_in_this_roi > max_points_per_boxes:
                     points_in_this_roi_data_xyz = points_in_this_roi_data_xyz.unsqueeze(0)
                     sample_idx = pointnet2_utils.furthest_point_sample(points_in_this_roi_data_xyz, max_points_per_boxes)
-                    sample_idx = sample_idx.squeeze(0)
-                    sampled_points = points_in_this_roi_data_feature[sample_idx.long()]
-                    points_per_roi[current_roi_idx_in_flat_batch,:max_points_per_boxes] = sampled_points
-                    points_per_roi_mask[current_roi_idx_in_flat_batch,:max_points_per_boxes] = True
+                    sample_idx = sample_idx.squeeze(0).unsqueeze(-1).expand(-1, channel).long()
+                    sampled_points = torch.gather(points_in_this_roi_data_feature, 0, sample_idx) # 放入list内
+                    points_per_roi.append(sampled_points)
+                    # 修改了张量内存--计算图中断 --不可取！
+                    # points_per_roi[current_roi_idx_in_flat_batch,:max_points_per_boxes] = sampled_points
+                    # points_per_roi_mask[current_roi_idx_in_flat_batch,:max_points_per_boxes] = True
                 else:
-                    points_per_roi[current_roi_idx_in_flat_batch,:num_points_in_this_roi] = points_in_this_roi_data_feature
-                    points_per_roi_mask[current_roi_idx_in_flat_batch,:num_points_in_this_roi] = True
-            current_roi_idx_in_flat_batch += 1
-    points_per_roi = points_per_roi.contiguous()
-    return points_per_roi,points_per_roi_mask
+                    pad = torch.zeros((max_points_per_boxes - num_points_in_this_roi, 3 + other_feature_dims),
+                                  device=batch_points.device, dtype=batch_points.dtype)
+                    sampled_points = torch.cat([points_in_this_roi_data_feature, pad], dim=0)
+                    # 放入list内
+                    points_per_roi.append(sampled_points)
+                    # 同 修改了计算图
+                    # points_per_roi[current_roi_idx_in_flat_batch,:num_points_in_this_roi] = points_in_this_roi_data_feature
+                    # points_per_roi_mask[current_roi_idx_in_flat_batch,:num_points_in_this_roi] = True
+            else:
+                sampled_points = torch.zeros((max_points_per_boxes, 3 + other_feature_dims),device=batch_points.device, dtype=batch_points.dtype)
+                # 放入list内
+                points_per_roi.append(sampled_points)
+    points_per_roi = torch.stack(points_per_roi,dim=0).contiguous()
+    return points_per_roi

@@ -709,7 +709,7 @@ class VoxelAggregationHead(RoIHeadTemplate):
 
             # 先对所有点进行一下特征处理
              # 在这里进行新的修改，这里是处理每一个网格的点的密度与数量
-            points_per_roi,points_per_roi_mask = density_utils.get_fixed_length_roi_points(batch_dict['points'], batch_dict['rois'],512,self.pool_cfg.ATTENTION.MAX_NUM_BOXES,1)
+            points_per_roi = density_utils.get_fixed_length_roi_points(batch_dict['points'], batch_dict['rois'],512,self.pool_cfg.ATTENTION.MAX_NUM_BOXES,1)
 
             grid_coords_idlist = []
             for idx in range(batch_dict['batch_size']):
@@ -726,6 +726,8 @@ class VoxelAggregationHead(RoIHeadTemplate):
             localgrid_densityfeat_fuse = self.crossattention_pointhead(batch_dict, point_features=localgrid_densityfeat, point_coords=grid_coords, layer_name="layer1")
             localgrid_densityfeat_fuse = localgrid_densityfeat_fuse.reshape(pooled_features.shape[0], pooled_features.shape[1], 64)
             localgrid_densityfeat_fuse = self.up_ffn(localgrid_densityfeat_fuse.permute(0, 2, 1))
+
+
             localgrid_densityfeat_fuse = self.fusion_Roi_and_Grid(points_per_roi,localgrid_densityfeat_fuse)
             if self.pool_cfg.DENSITYQUERY.get('COMBINE'):
                 # 这里是 LOF与GOF输出特征的加的地址
