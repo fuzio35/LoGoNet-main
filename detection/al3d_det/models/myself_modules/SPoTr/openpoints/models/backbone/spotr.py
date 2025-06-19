@@ -556,9 +556,6 @@ class SPoTrEncoder(nn.Module):
             f.append(f0)
         dicts = {"p":p, "f" :f}
 
-        for name, param in self.named_parameters():
-            if param.requires_grad and param.grad is None:
-                print(f"-=-=-=-=-= 没有参与反传的参数: {name}")
 
         # 返回f就好了
         return f0.squeeze(-1)
